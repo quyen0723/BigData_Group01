@@ -1,0 +1,7 @@
+Raw CSVs already present — skip download.
+ratings.csv: 32,000,205 lines (expected 32,000,205) OK
+movies.csv: 87,586 lines (expected 87,586) OK
+tags.csv: 2,000,073 lines (expected 2,000,073) OK
+links.csv: 87,586 lines (expected 87,586) OK
+Removed zip (use --keep-zip to retain).
+DOWNLOAD VERIFY: PASS — data/raw/ml-32m ready for B1.1
