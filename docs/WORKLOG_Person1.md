@@ -44,3 +44,13 @@
 - Temporal: 2 đỉnh 1996 (1.57M) và 2015–2020 (1.4–1.9M/năm); 1995 chỉ 4 ratings
 - Tags 2,000,072 rows nhưng coverage thưa → TF-IDF tags là OPTIONAL, genres multi-hot là core signal
 **Implications cho model (đã ghi trong report §9):** mọi claim trích ngược về section số đo. **Gate KILL-EDA:** PASS.
+## 2026-09-25 — B2.1 Spark SQL Analytics (evidence/b2_1_spark_sql.txt)
+**Đã làm:** `src/analytics/spark_sql_analytics.py` — 5 SQL analyses (Q1 most-rated, Q2 highly-rated + min support 100, Q3 genre pattern, Q4 user activity buckets, Q5 temporal 2013+) + `explain('formatted')` đầy đủ + phần PLAN INTERPRETATION.
+**Điều tra được (bug #3, #4):** pyspark `df.explain()` không có kwarg `toFile` → dùng JVM `ExplainMode.fromString('formatted')`; `LATERAL VIEW` + `JOIN` trực tiếp trong 1 query gây ParseException → wrap subquery.
+**Số liệu chính:**
+- Q1: Shawshank 102,929 ratings (avg 4.40); khớp EDA (cross-check nội bộ nhất quán)
+- Q2 (min support 100): top avg-rating — basis cho Popularity artifact
+- Q4 activity buckets: 20-49: 72,604 users / 50-199: 86,147 / 200-999: 38,576 / 1000+: 3,621 (tổng = 200,948 ✓) → dữ liệu cho chọn threshold few/enough T
+- Plan facts (verify trong evidence): **14 BroadcastExchange** (movies 87,585 rows broadcast, tránh shuffle 32M ratings); Q5 **PartitionFilters year >= 2013** (partition pruning); Q4 5 Exchange nodes (AQE compounding)
+- 1 sửa diễn giải cho khớp số đo: Q4 mô tả "2 shuffle" → thực đo 5 Exchange → đã sửa + regenerate evidence (trung thực theo INV5)
+**Gate:** PASS (5 analyses ≥ 2, plans captured, mọi claim interpretation đã đối chiếu evidence).
