@@ -66,3 +66,8 @@
 **Điều tra được (review code trước khi bàn giao):** 3 bug tự phát hiện qua syntax-check + review: (1) f-string escape `\'` gây SyntaxError → đổi sang so sánh số học (rating_ts là epoch long, cutoff là số — KHÔNG cần quotes); (2) notebook 03 có dead code `eval_list` hỏng + markdown claim "3 nguồn" trong khi code tính 2 → đã sửa trung thực thành ALS + Popularity (Content-Based per-user ranking = optional, disclose); (3) notebook 01 thiếu cell unzip curated.zip → đã thêm (nếu thiếu curated_ratings trên Drive sẽ assert ERR ngay).
 **Số liệu:** 3 notebook, 31 cells, 100% code cells pass ast.parse (trừ Colab magic `!pip`); curated.zip = 439MB (459,470,738 bytes... đo bằng ls -lh — con số chính xác lấy khi cần).
 **Gate:** syntax check PASS; mọi KILL-* gate là assert trong notebook (không thể chạy tiếp nếu fail).
+
+## 2026-09-25 — Bổ sung M2 handoff package vào notebook 03 (model persist + user_history)
+**Đã làm:** Thêm cell persist sau KILL-CONTRACT: (1) `model.write().save()` ALS model → Drive `models/als_v1.0.0/` (Spark ML format, Person 2 load bằng ALSModel.load); (2) export `user_history.parquet` (32M rows: userId, movieId, rating, rating_ts) — artifact thứ 4 theo CONTRACTS §3.4, cho Mongo import; (3) `model_card.json` — version, config, metrics, split cutoffs, đường dẫn artifacts — Person 2 đọc 1 file biết tất cả, không phải hỏi lại. Cập nhật README_COLAB_SETUP (đường dẫn Drive mới + bảng handoff).
+**Lý do:** review handoff-flow phát hiện notebook chỉ lưu serving JSON — thiếu chính model (cần cho B6.1 retrain/promotion so sánh) và user_history (bắt buộc theo contract 4 artifacts).
+**Gate:** syntax check PASS toàn bộ cells sau khi chèn.

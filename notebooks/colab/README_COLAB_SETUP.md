@@ -28,8 +28,10 @@ Cấu trúc Drive sau khi notebook chạy xong:
 MyDrive/movielens32m/
 ├── curated.zip          ← bạn upload (Bước 1)
 ├── curated/             ← notebook 01 tự unzip
-├── artifacts/           ← OUTPUT: popular_movies.json, similar_movies.json, als_topn.json
+├── artifacts/           ← OUTPUT: popular_movies.json, similar_movies.json, als_topn.json,
+│                          user_history.parquet, model_card.json
 ├── evidence/            ← OUTPUT: split_stats.csv, metrics.csv, als_grid_search.csv, ...
+├── models/als_v1.0.0/   ← OUTPUT: ALS model saved (Spark ML format — cho B6 retrain gate)
 └── checkpoints/         ← ALS checkpoint dir (MANDATORY, tự tạo)
 ```
 
@@ -64,8 +66,10 @@ files.download(f'{EVID}/split_stats.csv')      # và các file khác tương t�
 ```
 
 Copy vào repo:
-- `artifacts/` (repo): 3 file JSON serving artifacts → commit (dùng cho M2 handoff)
+- `artifacts/` (repo): 3 file JSON serving artifacts + `model_card.json` → commit (dùng cho M2 handoff)
 - `evidence/` (repo): split_stats.csv, metrics.csv, als_grid_search.csv, content_based_stats.csv
+- **Ở lại Drive (không commit repo — quá lớn):** `user_history.parquet`, `models/als_v1.0.0/` —
+  Person 2 lấy trực tiếp từ Drive khi import Mongo (user_history) và chạy B6 retrain gate (model)
 - Cập nhật CHECKLIST_Person1.md (mục 9–13) + WORKLOG_Person1.md + MODEL_DESIGN.md
 
 ## Notes kỹ thuật (đã research trong PLAN §Research)
