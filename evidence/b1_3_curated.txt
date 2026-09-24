@@ -1,0 +1,14 @@
+26/09/25 01:37:05 WARN Utils: Your hostname, quyen resolves to a loopback address: 127.0.1.1; using 192.168.0.112 instead (on interface wlp0s20f3)
+26/09/25 01:37:05 WARN Utils: Set SPARK_LOCAL_IP if you need to bind to another address
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/09/25 01:37:06 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[Stage 0:>                                                          (0 + 8) / 8][Stage 0:====================================>                      (5 + 3) / 8]                                                                                [Stage 12:>                                                         (0 + 8) / 8][Stage 12:==============>                                           (2 + 6) / 8][Stage 12:=====================>                                    (3 + 5) / 8][Stage 12:===========================================>              (6 + 2) / 8][Stage 14:>                                                         (0 + 8) / 8][Stage 14:===========================================>              (6 + 2) / 8]                                                                                [Stage 16:>                                                         (0 + 8) / 8][Stage 16:==============>                                           (2 + 6) / 8][Stage 16:====================================>                     (5 + 3) / 8][Stage 18:>                                                         (0 + 8) / 8][Stage 18:=======>                                                  (1 + 7) / 8]                                                                                [Stage 33:=======>                                                  (1 + 7) / 8][Stage 33:==================================================>       (7 + 1) / 8]                                                                                [curated_ratings] written rows=32,000,204 | read-back rows=32,000,204 (expected 32,000,204) | schema=SAME OK
+[curated_ratings] path=/home/fong/Projects/big_data/final_project/data/curated/curated_ratings
+[curated_movies] written rows=87,585 | read-back rows=87,585 (expected 87,585) | schema=SAME OK
+[curated_movies] path=/home/fong/Projects/big_data/final_project/data/curated/curated_movies
+[curated_tags] written rows=2,000,072 | read-back rows=2,000,072 (expected 2,000,072) | schema=SAME OK
+[curated_tags] path=/home/fong/Projects/big_data/final_project/data/curated/curated_tags
+[curated_links] written rows=87,585 | read-back rows=87,585 (expected 87,585) | schema=SAME OK
+[curated_links] path=/home/fong/Projects/big_data/final_project/data/curated/curated_links
+B1.3 VERIFY: PASS

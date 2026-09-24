@@ -7,9 +7,9 @@
 |---|-----|------|-----------|----------|--------|---|----------|---------|
 | 1 | 0.1 | B0.1 Repo + config + naming | Local | Critical | **Done** | 100 | `git tag M0`; `evidence/b0_1_skeleton_verify.txt` (verify PASS 4/4) | venv pyspark 3.5.7 + Java 21; cấu trúc theo PLAN §2 |
 | 2 | 0.2 | B0.2 Freeze CONTRACTS.md + sample JSON | Local | Critical | **Done** | 100 | `contracts/CONTRACTS.md` + 4 samples PASS | 4 artifact schema + routing tiers T (tunable) + event schema |
-| 3 | 1.1 | B1.1 Ingest CSV explicit schema | Local | Critical | Not Started | 0 | — | Verify row counts vs PRD (ERR2) |
-| 4 | 1.2 | B1.2 Clean + transform + join | Local | Critical | Not Started | 0 | — | Quality summary + before/after |
-| 5 | 1.3 | B1.3 Curated Parquet + read-back | Local | Critical | Not Started | 0 | — | Append target cho Person 2 streaming |
+| 3 | 1.1 | B1.1 Ingest CSV explicit schema | Local | Critical | **Done** | 100 | `evidence/b1_1_ingest.txt` (5/5 counts OK, PASS) | Fix: PERMISSIVE+corrupt-col thay FAILFAST (Spark 3.5.7 mis-parse RFC-4180); escape='"' cho 244 tags có quote |
+| 4 | 1.2 | B1.2 Clean + transform + join | Local | Critical | **Done** | 100 | `evidence/b1_2_clean.txt` (0 critical issues, PASS) | 0 null, 0 invalid, 0 dup, 0 unmatched; 7,080 movies no-genres, 3,153 movies 0 ratings (informational) |
+| 5 | 1.3 | B1.3 Curated Parquet + read-back | Local | Critical | **Done** | 100 | `evidence/b1_3_curated.txt` (4/4 OK, PASS) | Partition year (1995-2023); schema compare theo simpleString (Parquet không round-trip nullable/containsNull) |
 | 6 | 1.1–1.2 | B1.EDA EDA_REPORT.md | Local | High | Not Started | 0 | — | Yêu cầu riêng: mọi số kèm lệnh sinh |
 | 7 | 2.1 | B2.1 Spark SQL + explain('formatted') | Local | High | Not Started | 0 | — | ≥2 phân tích + plan interpretation |
 | 8 | 2.2 | B2.2 MapReduce cross-check | Local | Medium | Not Started | 0 | — | Input CSV/Text (risk R3) |
@@ -26,7 +26,7 @@
 
 ## Verify gates (đối chiếu sau mỗi bước — INV3)
 - [x] G0: Person 2 dựng mock artifact từ CONTRACTS.md không hỏi lại — contracts + samples đã publish (M0, 2026-09-25)
-- [ ] G1 (M1, day 2): Parquet read-back schema/counts consistent
+- [x] G1 (M1, day 2): Parquet read-back schema/counts consistent — PASS 2026-09-25 (4/4 tables, evidence/b1_3_curated.txt)
 - [ ] G2 (M2, day 5): metrics.csv đầy đủ + 4 artifacts đúng contract → handoff
 - [ ] G3: MapReduce == Spark ± tolerance
 - [ ] G4 (M5): gate fail-path giữ nguyên active version
@@ -42,5 +42,6 @@
 | — | Repo structure (PLAN §2) | Quyên | Đề xuất giữ nguyên, chờ duyệt ở B0.1 |
 
 ## Lịch sử cập nhật
+- 2026-09-25: B1.1–B1.3 **DONE** (M1 đạt sớm hơn schedule day 2). Data download verify PASS (MD5 GroupLens). 2 bugs parser phát hiện & fix có evidence: (1) FAILFAST vs RFC-4180 escaped quotes → PERMISSIVE+corrupt-assert; (2) schema read-back compare phải dùng simpleString. Bước kế: B1.EDA → B2.1/B2.2.
 - 2026-09-25: B0.1 + B0.2 **DONE** — repo skeleton (venv pyspark 3.5.7, verify PASS 4/4), CONTRACTS.md frozen + 4 mock samples PASS, commit M0. Bước kế: B1.1 (cần download MovieLens 32M).
 - 2026-09-25: Khởi tạo checklist (18 mục, tất cả Not Started) theo PLAN_Person1.md.

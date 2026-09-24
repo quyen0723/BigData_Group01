@@ -1,0 +1,81 @@
+26/09/25 01:21:46 WARN Utils: Your hostname, quyen resolves to a loopback address: 127.0.1.1; using 192.168.0.112 instead (on interface wlp0s20f3)
+26/09/25 01:21:46 WARN Utils: Set SPARK_LOCAL_IP if you need to bind to another address
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/09/25 01:21:47 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[Stage 0:>                                                          (0 + 8) / 8]                                                                                [Stage 3:>                                                          (0 + 8) / 8][Stage 3:=======>                                                   (1 + 7) / 8]                                                                                [Stage 28:>                                                         (0 + 8) / 8][Stage 28:=======>                                                  (1 + 7) / 8][Stage 28:==============>                                           (2 + 6) / 8]                                                                                [ratings] rows=32,000,204 expected=32,000,204 dev=0.000% OK
+[ratings] schema:
+root
+ |-- userId: integer (nullable = true)
+ |-- movieId: integer (nullable = true)
+ |-- rating: double (nullable = true)
+ |-- timestamp: long (nullable = true)
+
++------+-------+------+---------+
+|userId|movieId|rating|timestamp|
++------+-------+------+---------+
+|1     |17     |4.0   |944249077|
+|1     |25     |1.0   |944250228|
+|1     |29     |2.0   |943230976|
+|1     |30     |5.0   |944249077|
+|1     |32     |5.0   |943228858|
++------+-------+------+---------+
+only showing top 5 rows
+
+[movies] rows=87,585 expected=87,585 dev=0.000% OK
+[movies] schema:
+root
+ |-- movieId: integer (nullable = true)
+ |-- title: string (nullable = true)
+ |-- genres: string (nullable = true)
+
++-------+----------------------------------+-------------------------------------------+
+|movieId|title                             |genres                                     |
++-------+----------------------------------+-------------------------------------------+
+|1      |Toy Story (1995)                  |Adventure|Animation|Children|Comedy|Fantasy|
+|2      |Jumanji (1995)                    |Adventure|Children|Fantasy                 |
+|3      |Grumpier Old Men (1995)           |Comedy|Romance                             |
+|4      |Waiting to Exhale (1995)          |Comedy|Drama|Romance                       |
+|5      |Father of the Bride Part II (1995)|Comedy                                     |
++-------+----------------------------------+-------------------------------------------+
+only showing top 5 rows
+
+[tags] rows=2,000,072 expected=2,000,072 dev=0.000% OK
+[tags] schema:
+root
+ |-- userId: integer (nullable = true)
+ |-- movieId: integer (nullable = true)
+ |-- tag: string (nullable = true)
+ |-- timestamp: long (nullable = true)
+
++------+-------+-----------+----------+
+|userId|movieId|tag        |timestamp |
++------+-------+-----------+----------+
+|22    |26479  |Kevin Kline|1583038886|
+|22    |79592  |misogyny   |1581476297|
+|22    |247150 |acrophobia |1622483469|
+|34    |2174   |music      |1249808064|
+|34    |2174   |weird      |1249808102|
++------+-------+-----------+----------+
+only showing top 5 rows
+
+[links] rows=87,585 expected=87,585 dev=0.000% OK
+[links] schema:
+root
+ |-- movieId: integer (nullable = true)
+ |-- imdbId: integer (nullable = true)
+ |-- tmdbId: integer (nullable = true)
+
++-------+------+------+
+|movieId|imdbId|tmdbId|
++-------+------+------+
+|1      |114709|862   |
+|2      |113497|8844  |
+|3      |113228|15602 |
+|4      |114885|31357 |
+|5      |113041|11862 |
++-------+------+------+
+only showing top 5 rows
+
+[ratings] distinct users=200,948 expected=200,948 OK
+B1.1 VERIFY: PASS
