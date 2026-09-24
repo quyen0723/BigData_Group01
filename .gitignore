@@ -11,4 +11,4 @@ logs/
 *.bak
 .DS_Store
 # Colab checkpoints on Drive (never in repo)
-checkpoints/
+checkpoints/data/mr_input/

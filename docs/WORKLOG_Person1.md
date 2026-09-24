@@ -54,3 +54,9 @@
 - Plan facts (verify trong evidence): **14 BroadcastExchange** (movies 87,585 rows broadcast, tránh shuffle 32M ratings); Q5 **PartitionFilters year >= 2013** (partition pruning); Q4 5 Exchange nodes (AQE compounding)
 - 1 sửa diễn giải cho khớp số đo: Q4 mô tả "2 shuffle" → thực đo 5 Exchange → đã sửa + regenerate evidence (trung thực theo INV5)
 **Gate:** PASS (5 analyses ≥ 2, plans captured, mọi claim interpretation đã đối chiếu evidence).
+
+## 2026-09-25 — B2.2 MapReduce cross-check (evidence/b2_2_mapreduce.txt)
+**Đã làm:** `src/analytics/mapreduce_stats.py` — pipeline MapReduce chuẩn (MAP movieId→(rating,1) → COMBINE per-partition → REDUCE (sum,count)→avg) trên text export của curated ratings (risk R3: MR input là CSV/text, không đọc Parquet trực tiếp). Cross-check với Spark groupBy.
+**Số liệu:** MAP output **32,000,204** records; MR movies **84,432** = Spark movies 84,432; **max |avg diff| = 0.0000000000** (tol 1e-6), max |count diff| = 0, mismatches = 0, checked 84,432 movies. Top-5 khớp Q1/EDA (Shawshank 102,929 / avg 4.4046...).
+**Ghi chú:** chạy in-process Python (mapper/combiner/reducer đúng vai trò) vì máy không có Hadoop install; logic tương đương Hadoop streaming (stdin/stdout) — có thể chuyển thành mapper.py/reducer.py + `hadoop jar streaming` khi cần demo rubric.
+**Gate:** PASS (bảng cross-check đầy đủ trong evidence).

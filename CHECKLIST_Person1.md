@@ -10,9 +10,9 @@
 | 3 | 1.1 | B1.1 Ingest CSV explicit schema | Local | Critical | **Done** | 100 | `evidence/b1_1_ingest.txt` (5/5 counts OK, PASS) | Fix: PERMISSIVE+corrupt-col thay FAILFAST (Spark 3.5.7 mis-parse RFC-4180); escape='"' cho 244 tags có quote |
 | 4 | 1.2 | B1.2 Clean + transform + join | Local | Critical | **Done** | 100 | `evidence/b1_2_clean.txt` (0 critical issues, PASS) | 0 null, 0 invalid, 0 dup, 0 unmatched; 7,080 movies no-genres, 3,153 movies 0 ratings (informational) |
 | 5 | 1.3 | B1.3 Curated Parquet + read-back | Local | Critical | **Done** | 100 | `evidence/b1_3_curated.txt` (4/4 OK, PASS) | Partition year (1995-2023); schema compare theo simpleString (Parquet không round-trip nullable/containsNull) |
-| 6 | 1.1–1.2 | B1.EDA EDA_REPORT.md | Local | High | Not Started | 0 | — | Yêu cầu riêng: mọi số kèm lệnh sinh |
-| 7 | 2.1 | B2.1 Spark SQL + explain('formatted') | Local | High | Not Started | 0 | — | ≥2 phân tích + plan interpretation |
-| 8 | 2.2 | B2.2 MapReduce cross-check | Local | Medium | Not Started | 0 | — | Input CSV/Text (risk R3) |
+| 6 | 1.1–1.2 | B1.EDA EDA_REPORT.md | Local | High | **Done** | 100 | `docs/EDA_REPORT.md` (sinh bởi eda.py, 136 dòng) | KILL-EDA PASS; mọi số tái tạo bằng 1 lệnh |
+| 7 | 2.1 | B2.1 Spark SQL + explain('formatted') | Local | High | **Done** | 100 | `evidence/b2_1_spark_sql.txt` (5 queries + plans) | 14 BroadcastExchange; PartitionFilters year>=2013; Q4 5 Exchange (đã verify) |
+| 8 | 2.2 | B2.2 MapReduce cross-check | Local | Medium | **Done** | 100 | `evidence/b2_2_mapreduce.txt` | 84,432/84,432 khớp, max diff 0.0 — PASS |
 | 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | Not Started | 0 | — | Chốt temporal vs random trước |
 | 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | Not Started | 0 | — | Popularity Top-N deterministic |
 | 11 | 3.3 | B3.3 Content-Based Similar-Movie Lists | **Colab** | High | Not Started | 0 | — | Chú ý RAM: block-matrix nếu cần |
@@ -42,6 +42,7 @@
 | — | Repo structure (PLAN §2) | Quyên | Đề xuất giữ nguyên, chờ duyệt ở B0.1 |
 
 ## Lịch sử cập nhật
+- 2026-09-25: B1.EDA + B2.1 + B2.2 **DONE** (EDA_REPORT auto-generated; Spark SQL 5 analyses + plans verified; MapReduce cross-check exact 84,432/84,432). Phase 1+2 hoàn thành. Bước kế: B3.1 split + MODEL_DESIGN (Colab).
 - 2026-09-25: B1.1–B1.3 **DONE** (M1 đạt sớm hơn schedule day 2). Data download verify PASS (MD5 GroupLens). 2 bugs parser phát hiện & fix có evidence: (1) FAILFAST vs RFC-4180 escaped quotes → PERMISSIVE+corrupt-assert; (2) schema read-back compare phải dùng simpleString. Bước kế: B1.EDA → B2.1/B2.2.
 - 2026-09-25: B0.1 + B0.2 **DONE** — repo skeleton (venv pyspark 3.5.7, verify PASS 4/4), CONTRACTS.md frozen + 4 mock samples PASS, commit M0. Bước kế: B1.1 (cần download MovieLens 32M).
 - 2026-09-25: Khởi tạo checklist (18 mục, tất cả Not Started) theo PLAN_Person1.md.

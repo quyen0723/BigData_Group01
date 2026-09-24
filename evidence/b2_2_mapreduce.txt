@@ -1,0 +1,15 @@
+MAPREDUCE vs SPARK CROSS-CHECK (WBS 2.2)
+map output records: 32,000,204
+MR movies: 84,432 | Spark movies: 84,432
+max |avg diff| = 0.0000000000 (tol 1e-06)
+max |count diff| = 0 (tol 0)
+mismatches: 0
+checked movies: 84,432
+VERIFY: PASS
+
+Top-5 movies by rating count (MR pipeline result == Spark):
+  movieId=318 count=102,929 avg=4.4046 (spark: 102,929, 4.4046)
+  movieId=356 count=100,296 avg=4.0527 (spark: 100,296, 4.0527)
+  movieId=296 count=98,409 avg=4.1970 (spark: 98,409, 4.1970)
+  movieId=2571 count=93,808 avg=4.1564 (spark: 93,808, 4.1564)
+  movieId=593 count=90,330 avg=4.1484 (spark: 90,330, 4.1484)
