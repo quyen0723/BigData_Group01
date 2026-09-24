@@ -13,11 +13,11 @@
 | 6 | 1.1–1.2 | B1.EDA EDA_REPORT.md | Local | High | **Done** | 100 | `docs/EDA_REPORT.md` (sinh bởi eda.py, 136 dòng) | KILL-EDA PASS; mọi số tái tạo bằng 1 lệnh |
 | 7 | 2.1 | B2.1 Spark SQL + explain('formatted') | Local | High | **Done** | 100 | `evidence/b2_1_spark_sql.txt` (5 queries + plans) | 14 BroadcastExchange; PartitionFilters year>=2013; Q4 5 Exchange (đã verify) |
 | 8 | 2.2 | B2.2 MapReduce cross-check | Local | Medium | **Done** | 100 | `evidence/b2_2_mapreduce.txt` | 84,432/84,432 khớp, max diff 0.0 — PASS |
-| 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | Not Started | 0 | — | Chốt temporal vs random trước |
-| 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | Not Started | 0 | — | Popularity Top-N deterministic |
-| 11 | 3.3 | B3.3 Content-Based Similar-Movie Lists | **Colab** | High | Not Started | 0 | — | Chú ý RAM: block-matrix nếu cần |
-| 12 | 3.4 | B3.4 ALS + precompute Top-N | **Colab** | Critical | Not Started | 0 | — | rank/reg tunable → justification |
-| 13 | 3.5 | B3.5 Evaluation + 4 serving artifacts → metrics.csv | **Colab** | Critical | Not Started | 0 | — | **HANDOFF Person 2 (M2, day 5)** |
+| 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/01_split_baseline.ipynb` ready | Temporal split đã chốt; chạy notebook trên Colab + copy split_stats.csv về repo |
+| 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | **In Progress** | 50 | `notebooks/colab/01_split_baseline.ipynb` ready | Gộp chung notebook 01 |
+| 11 | 3.3 | B3.3 Content-Based Similar-Movie Lists | **Colab** | High | **In Progress** | 50 | `notebooks/colab/02_content_based.ipynb` ready | Block-matrix numpy (2048×87,585 ≈ 717MB/block) |
+| 12 | 3.4 | B3.4 ALS + precompute Top-N | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/03_als_eval_artifacts.ipynb` ready | Checkpoint dir MANDATORY đã set trong notebook |
+| 13 | 3.5 | B3.5 Evaluation + 4 serving artifacts → metrics.csv | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/03_als_eval_artifacts.ipynb` ready | KILL-CONTRACT assert trong notebook |
 | 14 | 6.1 | B6.1 Retrain candidate version | **Colab** | Critical | Not Started | 0 | — | Sau khi Person 2 streaming append (5.2) |
 | 15 | 6.2 | B6.2 Promotion gate + rollback logic | Colab/Local | High | Not Started | 0 | — | Fail-path phải giữ nguyên active version |
 | 16 | 7.1 | B7.1 Controlled experiment CSV vs Parquet + repro manifest | Local | Medium | Not Started | 0 | — | Warm-up + 3–5 runs, median |
@@ -42,6 +42,7 @@
 | — | Repo structure (PLAN §2) | Quyên | Đề xuất giữ nguyên, chờ duyệt ở B0.1 |
 
 ## Lịch sử cập nhật
+- 2026-09-25: Viết 3 Colab notebooks + README_COLAB_SETUP.md + curated.zip 439MB. Mục 9–13 → In Progress 50% (notebook ready, chờ chạy trên Colab). 3 bug tự phát hiện qua review: f-string escape, dead code + overclaim, thiếu cell unzip.
 - 2026-09-25: B1.EDA + B2.1 + B2.2 **DONE** (EDA_REPORT auto-generated; Spark SQL 5 analyses + plans verified; MapReduce cross-check exact 84,432/84,432). Phase 1+2 hoàn thành. Bước kế: B3.1 split + MODEL_DESIGN (Colab).
 - 2026-09-25: B1.1–B1.3 **DONE** (M1 đạt sớm hơn schedule day 2). Data download verify PASS (MD5 GroupLens). 2 bugs parser phát hiện & fix có evidence: (1) FAILFAST vs RFC-4180 escaped quotes → PERMISSIVE+corrupt-assert; (2) schema read-back compare phải dùng simpleString. Bước kế: B1.EDA → B2.1/B2.2.
 - 2026-09-25: B0.1 + B0.2 **DONE** — repo skeleton (venv pyspark 3.5.7, verify PASS 4/4), CONTRACTS.md frozen + 4 mock samples PASS, commit M0. Bước kế: B1.1 (cần download MovieLens 32M).
