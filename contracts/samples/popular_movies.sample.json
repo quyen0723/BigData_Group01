@@ -1,0 +1,9 @@
+{
+  "scope": "global",
+  "modelVersion": "v0.0.0-mock",
+  "generatedAt": "2026-09-25T00:00:00Z",
+  "items": [
+    {"movieId": 296, "title": "Pulp Fiction (1994)", "genres": "Crime|Drama", "rank": 1, "score": 8.829, "support": 87987},
+    {"movieId": 318, "title": "Shawshank Redemption, The (1994)", "genres": "Drama", "rank": 2, "score": 8.7, "support": 81000}
+  ]
+}

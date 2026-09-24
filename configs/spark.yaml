@@ -1,0 +1,25 @@
+# Spark session configuration — Person 1 (ETL/analytics, local)
+spark:
+  app_name: "movielens-etl"
+  master: "local[*]"
+  driver_memory: "4g"
+  # Explicit schemas everywhere: spark.sqlinferSchema not used (no silent inference)
+  sql:
+    shuffle_partitions: 8   # small local machine; tune for larger workloads
+
+paths:
+  raw_ratings: "data/raw/ml-32m/ratings.csv"
+  raw_movies: "data/raw/ml-32m/movies.csv"
+  raw_tags: "data/raw/ml-32m/tags.csv"
+  raw_links: "data/raw/ml-32m/links.csv"
+  curated_dir: "data/curated"
+  artifacts_dir: "artifacts"
+  evidence_dir: "evidence"
+
+dataset_expectations:   # FACT from PRD — used by ERR2 checks (B1.1)
+  ratings_rows: 32000204
+  movies_rows: 87585
+  tags_rows: 2000072
+  links_rows: 87585
+  users: 200948
+  tolerance_pct: 10.0    # measured deviation > 10% vs expectations => STOP

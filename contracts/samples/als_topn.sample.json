@@ -1,0 +1,10 @@
+{
+  "userId": 1,
+  "modelVersion": "v0.0.0-mock",
+  "generatedAt": "2026-09-25T00:00:00Z",
+  "strategy": "ALS",
+  "recommendations": [
+    {"movieId": 1193, "score": 4.87, "rank": 1},
+    {"movieId": 2959, "score": 4.51, "rank": 2}
+  ]
+}

@@ -1,0 +1,965 @@
+MOVIELENS HYBRID
+RECOMMENDATION SYSTEM
+Product Requirements Document (PRD) & System Design
+Specification
+History-Based Switching with Optional Fusion
+
+Phiên bản tiếng Việt - giữ nguyên technical keywords bằng English
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+Mục lục
+1. Tóm tắt điều hành
+2. Tổng quan sản phẩm cho khách hàng
+3. Mục tiêu, Non-goals và Success Criteria
+4. User Journeys và Functional Capabilities
+5. Scope và mức độ triển khai
+6. Nền tảng dữ liệu và Data Contracts
+7. System Architecture
+8. Offline Analytics & Modeling
+9. Recommendation Logic và Algorithms
+10. Online Serving
+11. Feedback và Periodic Model Refresh
+12. Evaluation Strategy
+13. Storage và Data Models
+14. API và Event Contracts
+15. Non-Functional Requirements
+16. Performance và Scalability Evidence
+17. Validation và Reproducibility
+18. Security, Privacy và Responsible Design
+19. Observability và Operations
+20. Implementation Plan
+21. Risks, Trade-offs và Open Decisions
+22. BDA501 Requirement Traceability
+23. Glossary
+24. References
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+1. Tóm tắt điều hành
+MovieLens Hybrid Recommendation System là một nền tảng recommendation có khả năng mở rộng,
+chuyển dữ liệu rating lịch sử và các rating events mới thành danh sách Top-N movie
+recommendations được cá nhân hóa. Thiết kế chủ động tách Data Ingestion, Offline
+Analytics/Modeling, Online Serving độ trễ thấp và Periodic Model Refresh để từng concern có thể mở
+rộng, kiểm thử và thay đổi độc lập.
+Trải nghiệm recommendation thay đổi theo lượng thông tin mà hệ thống đang có về user:
+
+
+0 history: trả về Popularity Top-N an toàn, ổn định và có minimum support.
+
+
+
+Few history: khai thác Content-Based từ các movie user đã rating tốt; có thể optional fusion với
+Popularity để giảm rủi ro do history còn thưa.
+
+
+
+Enough history: dùng ALS Collaborative Filtering làm nguồn personalization chính; có thể bổ sung
+content similarity khi cần.
+
+Điểm trọng tâm của project không phải "chạy ALS trên MovieLens", mà là xây dựng một end-to-end Big Data
+system có data lifecycle, model lifecycle, serving lifecycle, feedback loop, validation và performance evidence
+rõ ràng.
+
+2. Tổng quan sản phẩm cho khách hàng
+2.1 Hệ thống giải quyết vấn đề gì?
+Một movie catalog lớn tạo ra discovery problem: user không thể tự xem xét toàn bộ nội dung, trong
+khi một danh sách "most popular" duy nhất bỏ qua sở thích cá nhân. Hệ thống giảm search cost bằng
+cách chọn và xếp hạng một tập movie nhỏ, có liên quan hơn với từng user.
+
+2.2 User nhận được gì?
+
+
+Personalized Top-N recommendations cho user có đủ rating history.
+
+
+
+Fallback recommendations hữu ích cho new user hoặc user có rất ít history.
+
+
+
+Content-aware suggestions dựa trên similarity với các movie user đã thích.
+
+
+
+Recommendation response loại bỏ movie user đã rating khi latest history có sẵn.
+
+
+
+Serving vẫn hoạt động bằng current model version trong lúc candidate model mới được train và
+validate.
+
+2.3 Vì sao đây là Big Data system?
+Project không được xem là Big Data chỉ vì dataset có hàng chục triệu ratings. Big Data evidence nằm ở
+distributed processing, các joins/aggregations tạo shuffle, scalable model training, batch + streaming
+ingestion, storage optimization và controlled performance experiments. Kiến trúc cho phép tăng
+partitions/executors khi workload tăng thay vì phải thiết kế lại toàn bộ pipeline.
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+3. Mục tiêu, Non-goals và Success Criteria
+3.1 Goals
+
+
+Xây dựng reproducible end-to-end pipeline từ raw MovieLens đến Analytics, Recommendation,
+Serving và Feedback.
+
+
+
+Cung cấp personalized recommendation với cold-start handling rõ ràng.
+
+
+
+Minh chứng distributed data engineering bằng PySpark, Parquet, Spark SQL và một MapReduce
+workload có ý nghĩa.
+
+
+
+Đánh giá recommendation bằng cả prediction metrics và ranking metrics.
+
+
+
+Cung cấp system-performance evidence bằng ít nhất một controlled experiment.
+
+
+
+Dùng MongoDB làm low-latency serving store và có write/read-back evidence.
+
+
+
+Thiết kế streaming path để rating mới cập nhật serving state và sau đó ảnh hưởng periodic
+retraining.
+
+3.2 Non-goals
+
+
+Xây dựng Netflix clone ở production scale hoặc full movie-streaming platform.
+
+
+
+Suy luận age, gender, location hay demographics không tồn tại trong MovieLens 32M.
+
+
+
+Retrain ALS sau từng rating event.
+
+
+
+Dùng BERT/GPT chỉ để tăng độ mới khi core data modality là user-item-rating interaction.
+
+
+
+Cam kết content-safety filtering nếu chưa có user age/parental setting và movie certification từ
+nguồn đáng tin cậy.
+
+3.3 Success Criteria
+Nhóm tiêu chí
+
+Success Criteria
+Pipeline tạo Curated Parquet có schema rõ, data-quality
+checks và reconciliation.
+MapReduce và Spark SQL cho kết quả kiểm chứng được;
+có explain(formatted) evidence.
+ALS được so sánh với baseline; RMSE, Recall@K và
+NDCG@K được định nghĩa đúng theo task.
+MongoDB lưu serving artifacts và API có thể đọc Top-N
+theo userId.
+Rating event đi qua Kafka/Structured Streaming, cập
+nhật curated data và user-history state.
+Candidate model chỉ được activate sau Validation /
+Promotion Gate.
+Có controlled experiment, ví dụ CSV vs Parquet, với các
+điều kiện được giữ cố định.
+
+Data
+Analytics
+ML
+Serving
+Streaming
+Lifecycle
+Performance
+
+4. User Journeys và Functional Capabilities
+4.1 Journey A - user chưa có usable history
+1. Request: User gọi Recommendation API.
+2. History check: API đọc interaction_count / User History từ MongoDB serving state.
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+3. Strategy: nếu history = 0, router chọn Popularity Top-N.
+4. Filtering: áp dụng latest-history exclusion và optional policy filter nếu đủ dữ liệu.
+5. Response: trả Top-N ngay mà không invoke ALS training.
+
+4.2 Journey B - user có few ratings
+6. Profile: dùng latest User History để xác định các movie được rating tích cực.
+7. Content candidates: lấy Precomputed Similar-Movie Lists cho các movie này.
+8. Optional fusion: có thể merge với Popularity để ổn định sparse-history recommendation.
+9. Re-rank: Exclude Already-Rated và thực hiện Lightweight Re-rank.
+10. Response: trả Top-N.
+
+4.3 Journey C - user có enough history
+11. Primary source: đọc Precomputed ALS Top-N.
+12. Optional complement: có thể thêm content candidates để cải thiện diversity hoặc sparse areas.
+13. Re-rank: áp dụng latest-history exclusion và optional policy constraints.
+14. Response: trả Top-N mà không chạy Spark training trong request path.
+
+5. Scope và mức độ triển khai
+Mức
+
+Nội dung
+PySpark ETL, Curated Parquet, MapReduce, Spark SQL,
+Movie Mean baseline, ALS, RMSE, Top-N, MongoDB,
+validation, performance experiment.
+Popularity fallback, Content-Based similar-movie lists,
+history router, Recall@K/NDCG@K, feedback simulation.
+Kafka + Structured Streaming demo, immediate User
+History update.
+Age/content policy filter, external certification
+enrichment, cluster/cloud production deployment,
+ANN/vector search nếu catalog lớn hơn.
+
+Core - phải implement
+Recommended
+Prototype nếu đủ thời gian
+Design-only / extension
+
+6. Nền tảng dữ liệu và Data Contracts
+6.1 Dataset facts
+MovieLens 32M có 32,000,204 ratings và 2,000,072 tag applications trên 87,585 movies từ 200,948
+users. Mỗi user trong dataset đã rating ít nhất 20 movies và dataset không cung cấp demographics.
+[R1]
+File
+
+Schema chính
+
+ratings.csv
+
+userId, movieId, rating, timestamp
+
+movies.csv
+
+movieId, title, genres
+
+tags.csv
+
+userId, movieId, tag, timestamp
+
+links.csv
+
+movieId, imdbId, tmdbId
+
+Vai trò
+Primary explicit-feedback
+interaction table.
+Movie metadata cho joins, Analytics
+và content features.
+Optional content signal và tag
+Analytics.
+External identifier mapping; dùng
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+cho future enrichment nếu cần.
+
+6.2 Canonical rating schema
+Column
+
+Type
+
+Ý nghĩa
+Anonymized user
+identifier
+
+userId
+
+integer
+
+movieId
+
+integer
+
+Movie identifier
+
+rating
+
+double
+
+Explicit rating
+
+timestamp
+
+long -> timestamp
+
+Unix epoch seconds
+
+Validation
+Not null; positive integer.
+Not null; cần map được
+sang movies.csv nếu dùng
+enriched Analytics.
+0.5-5.0, bước 0.5.
+Convert sang timestamp;
+có thể giữ giá trị gốc để
+audit.
+
+6.3 Curated dataset contract
+
+
+Dùng Explicit Schema; không phụ thuộc CSV type inference cho critical fields.
+
+
+
+Invalid/null records phải được đếm và xử lý deterministic.
+
+
+
+ratings được join với movie metadata bằng movieId cho Analytics/Content use cases.
+
+
+
+Raw data và Curated data phải tách logic để downstream jobs không lặp lại cleaning.
+
+
+
+Curated Parquet là single logical source cho Analytics, Modeling, Evaluation và Scheduled
+Retraining.
+
+7. System Architecture
+Kiến trúc tách rõ data preparation, offline intelligence, online response và model lifecycle. Core data
+flows dùng đường liền; policy/eligibility filtering chỉ là extension nếu chưa có external
+age/certification data.
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+Figure 1. Final target architecture - History-Based Switching with Optional Fusion
+
+7.1 Layer 1 - Data Ingestion & Curated Storage
+Historical MovieLens files được xử lý bằng PySpark Batch ETL. Rating events mới đi qua Kafka và
+Spark Structured Streaming, được lưu vào Raw Event Storage, sau đó Validate / Transform trước khi
+append vào Curated Parquet. Event đã validate cũng cập nhật online User History / interaction_count
+trong MongoDB.
+
+7.2 Layer 2A - Offline Analytics & Modeling
+Curated data cấp dữ liệu độc lập cho MapReduce Statistics, Spark SQL Analytics và Recommendation
+Modeling. Recommendation không phải workload duy nhất; việc tách này giúp traceability với
+BDA501 và làm rõ trách nhiệm của từng subsystem.
+
+7.3 Layer 2B - Online Serving
+Recommendation request không retrain ALS. Request path chỉ đọc User History, chọn một hoặc nhiều
+serving sources đã chuẩn bị sẵn, Exclude Already-Rated, optional Policy/Fusion và trả Top-N.
+
+7.4 Layer 3 - Feedback & Periodic Model Refresh
+Accumulated curated data kích hoạt Scheduled Retraining. Candidate Model Version phải đi qua
+Validation / Promotion Gate trước khi Regenerate Serving Artifacts và Publish / Activate. Current
+version tiếp tục serve đến khi promotion thành công.
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+8. Offline Analytics & Modeling
+8.1 MapReduce workload
+Workload phù hợp là movie-level rating statistics. Combiner state phải mergeable dưới dạng
+`(sumRating, count)`, không được lấy average của các averages.
+Stage
+Mapper
+
+Input
+movieId, rating
+
+Combiner
+
+grouped mapper outputs
+
+Shuffle / Group
+
+mapper/combiner output
+
+Reducer
+
+partials per movie
+
+Validation
+
+same curated sample
+
+Operation
+emit movieId -> (rating, 1)
+sum partial sums và
+counts
+group by movieId
+totalSum, totalCount,
+avg=totalSum/totalCount
+compare với Spark
+groupBy
+
+Output
+Key-value partial statistics
+movieId -> (partialSum,
+partialCount)
+all partials per movie
+movieId, count, avgRating
+matching counts/averages
+
+8.2 Spark SQL Analytics
+
+
+Most-rated movies
+
+
+
+Highly-rated movies có minimum support
+
+
+
+Genre-level rating patterns
+
+
+
+User rating activity
+
+
+
+Temporal rating activity
+
+Ít nhất một formatted physical plan phải được giữ làm evidence. Review cần nhận diện Scan, Filter,
+Exchange/shuffle, HashAggregate và join strategy khi có.
+
+9. Recommendation Logic và Algorithms
+9.1 History-based strategy router
+History tier
+
+Primary source
+
+Optional complement
+
+0 history
+
+Popularity Top-N
+
+None hoặc onboarding
+
+Few history
+
+Content-Based similarmovie lists
+
+Popularity
+
+Enough history
+
+Precomputed ALS Top-N
+
+Content-Based
+
+Rationale
+Chưa có personalized
+latent/content profile.
+Khai thác known likes
+nhưng không over-trust
+sparse collaborative
+factors.
+Collaborative pattern trở
+thành primary signal.
+
+Threshold giữa “few” và “enough” là configurable design parameter. Cần kiểm chứng bằng
+experiment, không xem là universal constant.
+
+9.2 ALS Collaborative Filtering
+ALS là primary collaborative model vì core interaction data có dạng `(userId, movieId, rating)`. Spark
+ALS factorizes user-item preferences thành user latent factors và item latent factors, sau đó luân
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+phiên tối ưu bằng least squares. Spark có tài liệu cho explicit-feedback MovieLens, RMSE evaluation,
+Top-N generation và cold-start behavior. [R2]
+Concept
+Input
+Learned representation
+Prediction
+Training
+Cold start
+
+Định nghĩa
+userId, movieId, rating
+User latent-factor vector và movie latent-factor vector
+dot product giữa user factor và movie factor tạo
+preference/rating score
+alternately fix item factors và solve user factors, sau đó
+fix user factors và solve item factors
+unknown user/item có thể chưa có factor; hệ thống cần
+fallback routing
+
+9.3 Content-Based Recommendation
+Implementation ưu tiên của project là offline precomputation của Similar-Movie Lists bằng movie
+content signals như genres và optional tags. Cách này tránh phải đưa ANN/vector-search subsystem
+vào online path của course prototype.
+15. Feature construction: encode genres thành multi-hot features; optional thêm tag TF-IDF features.
+16. Similarity: tính movie-to-movie cosine similarity hoặc similarity measure có tài liệu rõ.
+17. Precompute: lưu Top-M similar movies cho mỗi movie.
+18. Online lookup: dùng positively rated/latest User History để lấy similar candidates.
+19. Fusion: optional combine content candidates với Popularity cho sparse-history users.
+
+9.4 Popularity Baseline và Fallback
+Popularity vừa là Top-N baseline, vừa là serving strategy cho 0-history users. Để tránh movie chỉ có
+một rating cao bất thường, cần minimum support và/hoặc weighted score thay vì chỉ sort raw average
+rating.
+
+10. Online Serving
+20. Request: client gọi Recommendation API với userId.
+21. State lookup: API đọc User History / interaction_count từ MongoDB.
+22. Route: chọn 0 / Few / Enough history.
+23. Retrieve: đọc Popularity Top-N, Precomputed Similar-Movie Lists hoặc Precomputed ALS Top-N.
+24. Fresh-history exclusion: loại item user vừa rating nhưng chưa kịp phản ánh trong ALS artifacts.
+25. Optional policy / fusion: chỉ áp dụng khi đủ source data và strategy yêu cầu.
+26. Lightweight Re-rank: merge/rank nhẹ, không chạy Spark training.
+27. Response: trả Top-N kèm strategy, modelVersion và generatedAt.
+
+11. Feedback và Periodic Model Refresh
+Streaming ingestion là continuous, nhưng ALS retraining là periodic batch. Kiến trúc không tuyên bố
+online ALS update sau từng event.
+Bước
+
+Mô tả
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+1. Rating event
+2. Kafka
+3. Structured Streaming
+4. Curated update
+5. Serving-state update
+
+User gửi rating mới.
+Event transport và decoupling.
+Đọc stream, checkpoint, validate/transform.
+Append event đã validate vào Curated Parquet.
+Update User History / interaction_count trong MongoDB.
+Dùng accumulated curated data để train Candidate
+Model Version.
+So sánh metric, sanity checks và policy trước promotion.
+Regenerate serving artifacts và activate version mới;
+current version vẫn serve đến khi thành công.
+
+6. Scheduled Retraining
+7. Validation / Promotion Gate
+8. Publish / Activate
+
+12. Evaluation Strategy
+12.1 Rating Prediction Evaluation
+Compared methods
+
+Metric
+
+Movie Mean baseline vs ALS
+
+RMSE
+
+Interpretation
+Lower is better; đo rating-prediction
+error trên held-out observed ratings.
+
+12.2 Ranking Evaluation
+Compared methods
+
+Metrics
+
+Popularity / Content / ALS
+
+Recall@K, NDCG@K
+
+Interpretation
+Recall đo khả năng retrieve relevant
+items; NDCG thưởng relevant items
+xuất hiện ở vị trí cao hơn.
+
+Relevant item phải được định nghĩa trước khi chạy ranking evaluation, ví dụ `rating >= 4.0` trong
+held-out set. Nếu dùng random split cho MVP, report phải nêu rõ limitation; temporal holdout là lựa
+chọn mạnh hơn để mô phỏng “past predicts future”.
+
+13. Storage và Data Models
+Logical collection / artifact
+
+Key
+
+user_recommendations
+
+userId
+
+user_history
+
+userId
+
+popular_movies
+
+scope/version
+
+similar_movies
+
+movieId
+
+Example contents
+modelVersion, generatedAt, strategy,
+recommendations[]
+interaction_count, recent/positive
+movieIds, lastUpdated
+ranked popularity list +
+support/statistics
+Top-M similar movieIds + similarity
+scores
+
+MongoDB là Serving Store, không phải training store. Curated Parquet là nguồn phân tích/huấn luyện;
+MongoDB tối ưu cho read path theo userId/movieId.
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+14. API và Event Contracts
+14.1 Recommendation API
+Item
+Endpoint
+Input
+
+Specification
+GET /recommendations/{userId}?k=10
+userId, optional k
+userId, strategy, modelVersion, generatedAt,
+recommendations[]
+History-based switching; fresh-history exclusion;
+optional fusion/re-rank
+Nếu user-specific artifact unavailable, trả validated
+Popularity fallback và log reason
+
+Output
+Behavior
+Failure fallback
+
+14.2 Rating Event Contract
+Field
+
+Type
+
+eventId
+
+string
+
+userId
+movieId
+rating
+timestamp
+
+integer
+integer
+double
+timestamp
+
+source
+
+string
+
+Notes
+Unique id cho
+idempotency/deduplication nếu
+implement.
+Anonymized user id.
+Movie id.
+0.5-5.0.
+Event time.
+Optional source/application
+identifier.
+
+15. Non-Functional Requirements
+Category
+Latency
+Scalability
+Availability
+Consistency
+Reproducibility
+Explainability
+Maintainability
+
+Requirement
+Online recommendation phải serve từ prepared
+artifacts; Spark training không chạy trong request path.
+Batch workloads dùng Spark partitions/executors; tránh
+collect full dataset về driver.
+Current serving version hoạt động trong lúc candidate
+versions được train/evaluate.
+User History serving state cập nhật từ validated rating
+events, có deterministic deduplication khi có thể.
+Document seeds, package versions, Spark configs và
+commands.
+Expose strategy source (Popularity/Content/ALS), dù
+latent factors không trực tiếp human-interpretable.
+Data contracts, artifact versioning và tách offline/online
+responsibilities rõ ràng.
+
+16. Performance và Scalability Evidence
+Controlled experiment đề xuất: CSV vs Parquet trên cùng logical workload. Mục tiêu là chứng minh
+ảnh hưởng của storage format và execution plan bằng số đo, không chỉ bằng nhận định.
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+Control
+Hardware
+Spark config
+Workload
+Input subset
+Partitioning
+Measurement
+
+Giữ cố định
+same CPU/RAM/storage
+same executors/cores/memory
+same query/transformation
+same logical records
+same intended parallelism khi so sánh được
+same timing method; ghi warm-up và số lần lặp
+
+Evidence cần lưu: execution time, query plan, Exchange/shuffle, data scan và bất kỳ thay đổi join
+strategy nào có ý nghĩa.
+
+17. Validation và Reproducibility
+Validation checkpoint
+Raw ingestion
+Cleaning
+Join
+MapReduce
+SQL
+ALS
+Top-N
+MongoDB
+Streaming
+Retraining
+Performance
+Reproducibility
+
+Evidence
+file presence, schema, expected row counts
+invalid/null/duplicate counts before/after
+matched/unmatched movieId counts
+compare output với Spark groupBy
+manual sample checks + explain(formatted)
+RMSE + sanity checks + coldStartStrategy documented
+already-rated items excluded
+write + read-back by userId
+event xuất hiện trong raw/curated + User History update
+candidate version + pass/fail gate + current-version
+continuity
+repeated controlled measurements
+requirements/dependencies, versions, seeds, exact
+commands
+
+18. Security, Privacy và Responsible Design
+
+
+Không infer demographics không có trong MovieLens.
+
+
+
+Không lưu PII ngoài phạm vi dataset; userId chỉ là anonymized identifier.
+
+
+
+Policy / Eligibility Filter là DESIGN-ONLY nếu chưa có authoritative age/certification data.
+
+
+
+Kafka/MongoDB credentials phải tách khỏi source code, quản lý bằng environment variables hoặc
+secret mechanism tương đương.
+
+
+
+API cần input validation, bounded k và logging phù hợp.
+
+19. Observability và Operations
+Signal
+Data quality
+Batch pipeline
+Streaming
+Model
+
+Examples
+invalid rate, join miss rate, duplicate rate
+job duration, task failures, shuffle read/write, executor
+utilization
+input rows/sec, processing rows/sec, lag, checkpoint
+health
+RMSE, Recall@K, NDCG@K, coverage, artifact timestamp
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+request latency, hit/fallback rate, strategy distribution,
+error rate
+active modelVersion, candidate version, promotion
+result
+
+Serving
+Lifecycle
+
+20. Implementation Plan
+Phase
+
+Deliverables
+rubric traceability, environment, dataset download
+instructions, schemas
+ingestion, data-quality checks, Curated Parquet
+MapReduce, Spark SQL, explain plans
+Movie Mean, Popularity, ALS, RMSE, Top-N
+MongoDB schema, write/read-back, API prototype
+Recall@K/NDCG@K, content Similar-Movie Lists, history
+router
+Kafka simulation, Structured Streaming, User History
+update
+Scheduled Retraining, Promotion Gate, artifact
+versioning
+controlled experiment, end-to-end verification
+README, report, diagrams, demo, contribution
+statement
+
+1. Verify & setup
+2. Data Engineering
+3. Analytics
+4. Recommendation MVP
+5. Serving
+6. Ranking & cold start
+7. Feedback/Streaming
+8. Lifecycle
+9. Performance & validation
+10. Packaging
+
+21. Risks, Trade-offs và Open Decisions
+Risk / decision
+Cold start là synthetic trong
+MovieLens 32M
+
+Impact
+
+Few-history threshold
+
+Ảnh hưởng routing quality
+
+Random split leakage
+
+Có thể overstate temporal
+recommendation quality
+
+Score fusion giữa heterogeneous
+sources
+Stale ALS artifacts giữa các lần
+retrain
+Content-only similarity overspecialize
+
+Không có true new-user examples
+
+ALS/Content/Popularity scores khác
+scale
+Rating mới chưa đổi latent factors
+ngay
+Novelty/diversity thấp
+
+Policy filter thiếu source data
+
+Không enforce age restriction chính
+xác
+
+Overengineering
+
+Quá nhiều models/services so với
+course scope
+
+Mitigation / decision rule
+Mask User History và disclose
+simulation.
+Xem là tunable parameter; test
+nhiều thresholds.
+Ưu tiên temporal holdout nếu khả
+thi; document nếu dùng random
+split.
+Normalize hoặc dùng rank-based
+fusion; document formula.
+Fresh-history exclusion + periodic
+retrain; User History update ngay.
+Optional Popularity/Content fusion
+hoặc diversity re-rank.
+Giữ DESIGN-ONLY đến khi có
+authoritative data.
+Ưu tiên core rubric + một
+meaningful improvement; label
+design-only rõ.
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+22. BDA501 Requirement Traceability
+Requirement area
+
+Architecture / evidence
+distributed ETL, joins/shuffles, scalable model training,
+batch + streaming design, performance experiment
+movie rating statistics với
+mapper/combiner/shuffle/reducer + Spark validation
+explicit schema, cleaning, transform, join, Curated
+Parquet
+multiple analytical queries + explain(formatted)
+ALS với evaluation và interpretation
+MongoDB serving artifacts + read-back
+Kafka + Structured Streaming design/prototype với event
+storage và serving-state update
+driver/executor/storage/scaling design; implemented vs
+design-only ghi rõ
+controlled CSV vs Parquet hoặc experiment tương đương
+versions/config/seeds/commands
+reconciliation và cross-checks xuyên suốt pipeline
+
+Big Data justification
+MapReduce
+PySpark/DataFrames
+Spark SQL
+Spark ML
+NoSQL
+Streaming
+Cluster/cloud
+Performance
+Reproducibility
+Validation
+
+23. Glossary
+Term
+
+Định nghĩa
+Gom nhiều records theo group rồi tính summary như
+count, sum, average, min, max.
+Alternating Least Squares - Collaborative Filtering
+algorithm học latent user/item factors.
+Phương pháp tham chiếu đơn giản để kiểm tra model
+phức tạp có cải thiện đo lường được hay không.
+Trường hợp new/sparse-history user hoặc item chưa có
+đủ interaction data cho collaborative personalization.
+Dữ liệu đã clean, standardized và validated, sẵn sàng cho
+Analytics/Modeling.
+Hệ thống dùng nhiều recommendation strategies; thiết
+kế này dùng history-based switching với optional fusion.
+Ranking metric thưởng relevant items xuất hiện gần đầu
+recommendation list.
+Tỷ lệ relevant held-out items được retrieve trong Top-K
+list.
+Prepared data/model output tối ưu cho online retrieval,
+ví dụ Popularity Top-N, Similar-Movie Lists, ALS Top-N.
+Ranked list gồm N recommendations ưu tiên cao nhất
+cho user.
+
+Aggregation
+ALS
+Baseline
+Cold start
+Curated data
+Hybrid recommender
+NDCG@K
+Recall@K
+Serving artifact
+Top-N
+
+24. References
+[R1] GroupLens Research. MovieLens 32M Dataset README.
+[R2] Apache Spark Documentation. Collaborative Filtering / ALS, MLlib.
+[R3] Apache Spark Documentation. Structured Streaming and Kafka Integration.
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+[R4] MongoDB Documentation. Data Modeling / Serving Patterns.
+[R5] Covington, P., Adams, J., & Sargin, E. (2016). Deep Neural Networks for YouTube
+Recommendations - tham khảo kiến trúc candidate generation và ranking.
+
+MovieLens Hybrid Recommendation System - PRD & System Design Specification
+
+

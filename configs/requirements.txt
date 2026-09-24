@@ -1,0 +1,8 @@
+# Person 1 environment — created 2026-09-25 (verify: .venv)
+# Python 3.12.3 / Java openjdk 21.0.12.1 / venv at <repo>/.venv
+# Colab notebooks use their own preinstalled pyspark — record Colab version there.
+pyspark==3.5.7
+pyyaml==6.0.3
+pandas==3.0.6
+numpy==2.5.3
+# pymongo is Person 2's dependency for serving; listed for API-side reuse only

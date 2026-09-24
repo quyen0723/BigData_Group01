@@ -1,0 +1,36 @@
+# Evaluation & model configuration — Person 1 (applied in Colab, WBS 3.x)
+# All tunable values carry justification per INV6 (see PLAN_Person1.md research section).
+
+split:
+  method: "global_temporal"       # primary — verified: SIGIR'23, TOIS'23, RecSys'20
+  sensitivity_check: "random"    # secondary run, disclosed as less reliable
+  ratios: {train: 0.70, val: 0.15, test: 0.15}
+  seed: 42                        # only used for random sensitivity check; temporal split is deterministic
+  relevant_item_threshold: 4.0    # FACT: PRD §evaluation (rating >= 4.0 in holdout)
+
+ranking_metrics:
+  k_list: [10, 20]                # Recall@K / NDCG@K reported at K=10 (primary) and K=20
+
+topn:
+  n: 10                           # matches API contract GET /recommendations/{userId}?k=10
+  top_m_similar: 20               # Similar-Movie list size per movie
+
+popularity:
+  min_support_grid: [50, 100, 500] # tunable — final value chosen by validation result
+  score: "weighted"               # rating_count + average_rating with min support
+
+als:
+  rank_grid: [10, 50]             # Spark default 10; grid per Spark docs + practice
+  reg_param_grid: [0.05, 0.1, 0.17]
+  max_iter: 15                    # <= 15: higher iterations risk OOM without checkpointing
+  nonnegative: true
+  cold_start_strategy: "drop"     # for evaluation only; business cold start handled by router
+  rmse_sanity_band: [0.6, 1.1]    # KILL-METRIC: ALS RMSE outside band => investigate before reporting
+
+colab:
+  checkpoint_dir: "/content/drive/MyDrive/movielens32m/checkpoints"  # MANDATORY: ALS OOM without it
+  data_dir: "/content/drive/MyDrive/movielens32m"
+  driver_memory: "8g"
+  executor_memory: "8g"
+  memory_fraction: 0.9
+  fallback_if_oom: "sample_users_20pct"  # document in MODEL_DESIGN.md if triggered

@@ -1,0 +1,9 @@
+{
+  "movieId": 296,
+  "modelVersion": "v0.0.0-mock",
+  "generatedAt": "2026-09-25T00:00:00Z",
+  "similar": [
+    {"movieId": 1084, "score": 0.917, "rank": 1},
+    {"movieId": 1210, "score": 0.883, "rank": 2}
+  ]
+}
