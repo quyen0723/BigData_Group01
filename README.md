@@ -1,5 +1,3 @@
-# MovieLens Hybrid Recommendation System — BDA501 Final Project
-
 Hybrid recommender (Movie Mean / Popularity / Content-Based / ALS) with history-based
 switching, built on PySpark ETL → Curated Parquet → Spark ML → MongoDB serving.
 See `docs/` for the PRD and Architecture Deep Dive.
