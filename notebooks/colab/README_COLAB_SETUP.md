@@ -82,3 +82,42 @@ Copy vào repo:
   (`train.sampleBy('userId', fractions=...)`) — chỉ dùng khi đã thử High-RAM + checkpoint.
 - Popularity `min_support` chọn 100 mặc định; justification cuối cùng lấy từ
   `metrics.csv` (so sánh Recall giữa các nguồn — INV6: giá trị chọn phải có số đo).
+## Bước 5 — Person 2: consume M2 package (KHÔNG bị kẹt ở bước nào)
+
+Sau khi 3 notebook PASS, Drive `movielens32m/` chứa đủ package. Person 2 làm như sau:
+
+### 5.1 Import serving artifacts vào MongoDB (3 collection)
+Các file JSON là **array of docs** → dùng `--jsonArray`:
+```bash
+mongoimport --uri "$MONGO_URI" --collection popular_movies   --file popular_movies.json --jsonArray
+mongoimport --uri "$MONGO_URI" --collection similar_movies   --file similar_movies.json --jsonArray
+mongoimport --uri "$MONGO_URI" --collection user_recommendations --file als_topn.json --jsonArray
+```
+> Lưu ý contract mapping: `als_topn.json` → collection **`user_recommendations`** (tên file ≠ tên collection, theo CONTRACTS.md §3.3).
+
+### 5.2 Sinh `user_history` (collection thứ 4) từ user_history_seed.parquet
+`user_history_seed.parquet` là RAW ratings (userId, movieId, rating, rating_ts) —
+Person 2 **aggregate** thành docs theo contract §3.4 rồi insert:
+```python
+# mỗi doc: {userId, interaction_count, recent_movieIds, positive_movieIds, lastUpdated}
+# recent_movieIds  = N phim mới nhất theo rating_ts
+# positive_movieIds = phim rating >= 4.0
+# streaming append (Kafka) sẽ UPDATE tiếp các doc này (interaction_count++, push recent)
+```
+KHÔNG insert seed parquet thẳng vào Mongo — nó chỉ là dữ liệu gốc để aggregate.
+
+### 5.3 Load ALS model (cho demo / B6 retrain so sánh — không cần cho serving online)
+```python
+from pyspark.ml.recommendation import ALSModel
+model = ALSModel.load('/content/drive/MyDrive/movielens32m/models/als_v1.0.0')
+```
+Serving online KHÔNG load model — đọc `user_recommendations` collection (precomputed Top-N).
+
+### 5.4 Mọi metadata khác → đọc `artifacts/model_card.json`
+- config ALS đã chọn + RMSE val/test + split cutoffs + đường dẫn mọi artifact
+- min_support Popularity + justification → xem repo `evidence/metrics.csv` + MODEL_DESIGN.md
+- Nếu thiếu gì → kiểm tra model_card trước khi hỏi Person 1 (mọi đường dẫn ghi sẵn trong đó)
+
+### 5.5 Version rule (CONTRACTS §6)
+`v1.0.0` active. Person 2 không đổi version khi import; khi Person 1 chạy B6 retrain →
+candidate `v1.1.0`, promotion gate PASS mới activate atomically (fail ⟹ v1.0.0 keeps serving).
