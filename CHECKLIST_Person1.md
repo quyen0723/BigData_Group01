@@ -5,8 +5,8 @@
 
 | # | WBS | Bước | Môi trường | Priority | Status | % | Evidence | Ghi chú |
 |---|-----|------|-----------|----------|--------|---|----------|---------|
-| 1 | 0.1 | B0.1 Repo + config + naming | Local | Critical | Not Started | 0 | — | Cấu trúc đề xuất trong PLAN §2, duyệt trước |
-| 2 | 0.2 | B0.2 Freeze CONTRACTS.md + sample JSON | Local | Critical | Not Started | 0 | — | Handoff Person 2 (mock artifacts) |
+| 1 | 0.1 | B0.1 Repo + config + naming | Local | Critical | **Done** | 100 | `git tag M0`; `evidence/b0_1_skeleton_verify.txt` (verify PASS 4/4) | venv pyspark 3.5.7 + Java 21; cấu trúc theo PLAN §2 |
+| 2 | 0.2 | B0.2 Freeze CONTRACTS.md + sample JSON | Local | Critical | **Done** | 100 | `contracts/CONTRACTS.md` + 4 samples PASS | 4 artifact schema + routing tiers T (tunable) + event schema |
 | 3 | 1.1 | B1.1 Ingest CSV explicit schema | Local | Critical | Not Started | 0 | — | Verify row counts vs PRD (ERR2) |
 | 4 | 1.2 | B1.2 Clean + transform + join | Local | Critical | Not Started | 0 | — | Quality summary + before/after |
 | 5 | 1.3 | B1.3 Curated Parquet + read-back | Local | Critical | Not Started | 0 | — | Append target cho Person 2 streaming |
@@ -25,7 +25,7 @@
 | 18 | 8.2 | B8.2 Evidence pack + release tag | Local | Critical | Not Started | 0 | — | Mọi rubric claim có evidence |
 
 ## Verify gates (đối chiếu sau mỗi bước — INV3)
-- [ ] G0: Person 2 dựng mock artifact từ CONTRACTS.md không hỏi lại
+- [x] G0: Person 2 dựng mock artifact từ CONTRACTS.md không hỏi lại — contracts + samples đã publish (M0, 2026-09-25)
 - [ ] G1 (M1, day 2): Parquet read-back schema/counts consistent
 - [ ] G2 (M2, day 5): metrics.csv đầy đủ + 4 artifacts đúng contract → handoff
 - [ ] G3: MapReduce == Spark ± tolerance
@@ -42,4 +42,5 @@
 | — | Repo structure (PLAN §2) | Quyên | Đề xuất giữ nguyên, chờ duyệt ở B0.1 |
 
 ## Lịch sử cập nhật
+- 2026-09-25: B0.1 + B0.2 **DONE** — repo skeleton (venv pyspark 3.5.7, verify PASS 4/4), CONTRACTS.md frozen + 4 mock samples PASS, commit M0. Bước kế: B1.1 (cần download MovieLens 32M).
 - 2026-09-25: Khởi tạo checklist (18 mục, tất cả Not Started) theo PLAN_Person1.md.
