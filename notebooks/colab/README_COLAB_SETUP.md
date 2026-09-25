@@ -1,5 +1,10 @@
 # Hướng dẫn chạy trên Google Colab — Person 1 (Phase 3: B3.1 → B3.5)
 
+> **Drive M2 package (Person 2 tải artifacts + model):**
+> https://drive.google.com/drive/folders/1nruGnD_DvSZqAfhwpC7tk_Va6pyUw3yF?usp=sharing
+> (curated/, artifacts/, evidence/, models/als_v1.0.0/ — Person 2 chỉ cần đọc mục §5 bên dưới)
+
+
 > Mục tiêu: train model (split, baselines, content-based, ALS, evaluation) trên Colab
 > vì máy local thiếu RAM cho ALS full 32M. Input duy nhất cần upload: **curated Parquet**.
 

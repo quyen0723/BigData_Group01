@@ -2,6 +2,10 @@ Hybrid recommender (Movie Mean / Popularity / Content-Based / ALS) with history-
 switching, built on PySpark ETL → Curated Parquet → Spark ML → MongoDB serving.
 See `docs/` for the PRD and Architecture Deep Dive.
 
+> **M2 package (serving artifacts + ALS model, Person 2 consume):**
+> https://drive.google.com/drive/folders/1nruGnD_DvSZqAfhwpC7tk_Va6pyUw3yF?usp=sharing
+> Hướng dẫn: `notebooks/colab/README_COLAB_SETUP.md` §5 (mongoimport, user_history seed, ALSModel.load, version rule).
+
 ## Roles (per Project Management Tracker)
 - **Person 1 (Quyên)**: Data → Modeling → Evaluation → Serving Artifacts
 - **Person 2**: MongoDB → API → Routing → Streaming → Serving Integration
