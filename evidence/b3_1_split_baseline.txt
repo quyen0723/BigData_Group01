@@ -1,0 +1,31 @@
+B3.1 SPLIT + B3.2 BASELINES — CO LAB RUN (from notebooks/Runned/01_split_baseline.ipynb, 2026-09-25)
+SOURCE: executed notebook outputs (downloaded from Colab; all numbers below copied verbatim)
+
+=== B3.1 Global Temporal Split ===
+curated ratings: 32,000,204 (matches PRD exactly)
+cutoff val:  1476348398.0  (= 2016-10-13, approxQuantile relativeError=1e-4 on epoch `timestamp`)
+cutoff test: 1573258563.0  (= 2019-11-09)
+train=22,399,368 (70.0%)  val=4,798,976 (15.0%)  test=4,801,860 (15.0%)
+  sum check: 22,399,368 + 4,798,976 + 4,801,860 = 32,000,204  OK
+
+GATE KILL-LEAKAGE: max(train)=1476348395 < min(val)=1476348398 < min(test)=1573258563 : True -> PASS
+split_stats.csv written to Drive evidence/ (cross-notebook input for nb03)
+
+=== B3.2a Movie Mean Baseline ===
+global fallback mean (train): 3.5287
+MovieMean RMSE on val:  1.0092
+MovieMean RMSE on test: 0.9939
+GATE KILL-METRIC: 0.9939 in band [0.6, 1.1] -> PASS
+
+=== B3.2b Popularity Top-N ===
+min_support=50:  top5 movieIds = [159817, 318, 142115, 858, 50]
+min_support=100: top5 movieIds = [159817, 318, 142115, 858, 50]
+min_support=500: top5 movieIds = [318, 858, 50, 527, 1221]
+popularity deterministic (min_support=100): True -> PASS
+popular_movies.json + metrics_partial.csv saved to Drive artifacts/
+
+=== ENV ===
+Colab, pyspark 3.5.7, JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64, driver heap 6g
+Note: DeprecationWarning datetime.utcnow() (cosmetic; fix in nb03 later)
+
+VERIFY: PASS (all gates)

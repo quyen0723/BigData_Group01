@@ -84,3 +84,14 @@
 **Sự kiện:** Quyên chạy notebook 01 trên Colab — gặp lần lượt: (1) `curated.zip` upload lệch folder → assert ERR đúng thiết kế (chẩn đoán cell đã đưa); (2) `JAVA_GATEWAY_EXITED` do notebook hardcode `JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64` trong khi máy Colab không có đường dẫn đó → fix: apt cài trước + glob `java-11*` + assert (commit e10fc38); (3) **disconnect giữa cell split — bug #8 (nghiêm trọng)**: `ratings.select('rating_ts').toPandas()` kéo 32M rows (~3GB) về Python trong khi JVM heap 8g đã chiếm 11/12.7GB → fix: `approxQuantile(relativeError=0)` tính trong JVM (exact trên long) (commit ac23484); (4) **bug #9**: hardening toàn 3 notebook — driver heap 8g→6g (JVM heap không co được, 8g đói RAM Python; DataFrame cache = MEMORY_AND_DISK nên 6g an toàn), nb03 rel_map compact + Arrow tường minh cho 2 chỗ toPandas còn lại (12M/2M rows đã aggregate, không phải raw), progress prints (commit b632bed); (5) bug #10 tự phát hiện khi verify: comment inline làm đứt builder chain `.getOrCreate()` trong nb03 → rewrite cell session (commit dfccc7c).
 **Bài học method:** mọi verify syntax + OOM scan đều thực hiện TRƯỚC khi commit, nhưng chỉ phát hiện bug #8 khi chạy thật trên Colab → feedback loop chạy-thật là gate không thể thay thế.
 **Trạng thái notebooks:** 3/3 pass ast.parse, 0 chỗ toPandas trên bảng 32M rows, mọi big-collect đã loại.
+
+## 2026-09-25 — B3.1 + B3.2 DONE trên Colab (runned notebook: notebooks/Runned/01_split_baseline.ipynb)
+**Đã làm:** Notebook 01 chạy hoàn tất trên Colab sau chuỗi 11 bug fix (output đầy đủ trong file runned user tải về repo).
+**Số liệu đo được (copy verbatim từ output):**
+- Split: train **22,399,368 (70.0%)** / val **4,798,976 (15.0%)** / test **4,801,860 (15.0%)** — tổng đúng 32,000,204
+- Cutoff: val=1476348398 (2016-10-13), test=1573258563 (2019-11-09) — approxQuantile 1e-4 trên cột `timestamp` (epoch)
+- KILL-LEAKAGE: max(train)=1476348395 < min(val)=1476348398 < min(test)=1573258563 → **PASS** (khoảng cách train↔val chỉ 3 giây — cutoff là data point thật)
+- MovieMean: RMSE val **1.0092**, test **0.9939** (fallback mean 3.5287) — trong band [0.6, 1.1] → PASS
+- Popularity: ms=50/100 cùng top5 [159817, 318, 142115, 858, 50]; ms=500 khác [318, 858, 50, 527, 1221]; deterministic True → PASS
+**Nhận xét:** RMSE MovieMean 0.99 là baseline hợp lý (EDA: mean 3.5404, std 1.059; ALS kỳ vọng 0.75-0.9 phải thắng baseline này). ms=50 vs 100 top5 trùng → chọn ms=100 (an toàn hơn cho long tail, EDA §5: 62.1% phim <10 ratings).
+**Bước kế:** chạy notebook 02 (content-based) trên Colab; split_stats.csv đã ở Drive cho nb03.

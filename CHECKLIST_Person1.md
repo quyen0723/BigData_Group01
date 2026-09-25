@@ -13,8 +13,8 @@
 | 6 | 1.1–1.2 | B1.EDA EDA_REPORT.md | Local | High | **Done** | 100 | `docs/EDA_REPORT.md` (sinh bởi eda.py, 136 dòng) | KILL-EDA PASS; mọi số tái tạo bằng 1 lệnh |
 | 7 | 2.1 | B2.1 Spark SQL + explain('formatted') | Local | High | **Done** | 100 | `evidence/b2_1_spark_sql.txt` (5 queries + plans) | 14 BroadcastExchange; PartitionFilters year>=2013; Q4 5 Exchange (đã verify) |
 | 8 | 2.2 | B2.2 MapReduce cross-check | Local | Medium | **Done** | 100 | `evidence/b2_2_mapreduce.txt` | 84,432/84,432 khớp, max diff 0.0 — PASS |
-| 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/01_split_baseline.ipynb` ready | Temporal split đã chốt; chạy notebook trên Colab + copy split_stats.csv về repo |
-| 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | **In Progress** | 50 | `notebooks/colab/01_split_baseline.ipynb` ready | Gộp chung notebook 01 |
+| 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` + `evidence/b3_1_split_baseline.txt` | 70.0/15.0/15.0%, KILL-LEAKAGE PASS; MODEL_DESIGN §1-2 còn phải viết |
+| 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` | RMSE test 0.9939 (band PASS); popularity deterministic PASS; ms=100 |
 | 11 | 3.3 | B3.3 Content-Based Similar-Movie Lists | **Colab** | High | **In Progress** | 50 | `notebooks/colab/02_content_based.ipynb` ready | Block-matrix numpy (2048×87,585 ≈ 717MB/block) |
 | 12 | 3.4 | B3.4 ALS + precompute Top-N | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/03_als_eval_artifacts.ipynb` ready | Checkpoint dir MANDATORY đã set trong notebook |
 | 13 | 3.5 | B3.5 Evaluation + 4 serving artifacts → metrics.csv | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/03_als_eval_artifacts.ipynb` ready | KILL-CONTRACT assert trong notebook |
