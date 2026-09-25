@@ -1,0 +1,11 @@
+task,model,metric,set,value
+rating_prediction,MovieMean,RMSE,test,0.9939259880600987
+rating_prediction,ALS,RMSE,test,0.8336305671913672
+topn_ranking,ALS,Recall@10,test_holdout,0.014408493427704751
+topn_ranking,ALS,NDCG@10,test_holdout,0.00153242394697675
+topn_ranking,ALS,Recall@20,test_holdout,0.0346309403437816
+topn_ranking,ALS,NDCG@20,test_holdout,0.0020204010785048717
+topn_ranking,Popularity,Recall@10,test_holdout,0.6078104694945187
+topn_ranking,Popularity,NDCG@10,test_holdout,0.1584670036048133
+topn_ranking,Popularity,Recall@20,test_holdout,0.6454966512278831
+topn_ranking,Popularity,NDCG@20,test_holdout,0.12572396277052889

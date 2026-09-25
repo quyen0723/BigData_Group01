@@ -1,0 +1,2 @@
+n_total,n_train,n_val,n_test,cut_val,cut_test,method,leak_free
+32000204,22399368,4798976,4801860,1476348398.0,1573258563.0,global_temporal_70_15_15,True

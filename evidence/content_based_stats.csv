@@ -1,0 +1,2 @@
+n_movies,n_with_similar,n_no_genre_overlap,top_m,method
+87585,80505,7080,20,genres_multihot_cosine_blockmatrix

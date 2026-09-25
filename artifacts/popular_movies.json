@@ -1,0 +1,87 @@
+{
+  "scope": "global",
+  "modelVersion": "v1.0.0",
+  "generatedAt": "2026-09-25T07:07:26.215047Z",
+  "items": [
+    {
+      "movieId": 159817,
+      "title": "Planet Earth (2006)",
+      "genres": "Documentary",
+      "rank": 1,
+      "score": 4.468,
+      "support": 173
+    },
+    {
+      "movieId": 318,
+      "title": "Shawshank Redemption, The (1994)",
+      "genres": "Crime|Drama",
+      "rank": 2,
+      "score": 4.428,
+      "support": 73945
+    },
+    {
+      "movieId": 142115,
+      "title": "The Blue Planet (2001)",
+      "genres": "Documentary",
+      "rank": 3,
+      "score": 4.345,
+      "support": 132
+    },
+    {
+      "movieId": 858,
+      "title": "Godfather, The (1972)",
+      "genres": "Crime|Drama",
+      "rank": 4,
+      "score": 4.344,
+      "support": 47709
+    },
+    {
+      "movieId": 50,
+      "title": "Usual Suspects, The (1995)",
+      "genres": "Crime|Mystery|Thriller",
+      "rank": 5,
+      "score": 4.31,
+      "support": 52639
+    },
+    {
+      "movieId": 527,
+      "title": "Schindler's List (1993)",
+      "genres": "Drama|War",
+      "rank": 6,
+      "score": 4.274,
+      "support": 56865
+    },
+    {
+      "movieId": 1221,
+      "title": "Godfather: Part II, The (1974)",
+      "genres": "Crime|Drama",
+      "rank": 7,
+      "score": 4.264,
+      "support": 31216
+    },
+    {
+      "movieId": 2019,
+      "title": "Seven Samurai (Shichinin no samurai) (1954)",
+      "genres": "Action|Adventure|Drama",
+      "rank": 8,
+      "score": 4.258,
+      "support": 12776
+    },
+    {
+      "movieId": 904,
+      "title": "Rear Window (1954)",
+      "genres": "Mystery|Thriller",
+      "rank": 9,
+      "score": 4.247,
+      "support": 19210
+    },
+    {
+      "movieId": 2959,
+      "title": "Fight Club (1999)",
+      "genres": "Action|Crime|Drama|Thriller",
+      "rank": 10,
+      "score": 4.231,
+      "support": 49758
+    }
+  ]
+}

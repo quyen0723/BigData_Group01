@@ -1,0 +1,30 @@
+{
+  "modelVersion": "v1.0.0",
+  "modelType": "ALS (implicit feedback off, explicit ratings)",
+  "config": {
+    "rank": 50,
+    "regParam": 0.05,
+    "maxIter": 15,
+    "nonnegative": true,
+    "coldStartStrategy": "drop",
+    "seed": 42
+  },
+  "metrics": {
+    "rmse_val": 0.8486986447893219,
+    "rmse_test": 0.8336305671913672,
+    "rmse_movemean_test": 0.9939259880600987
+  },
+  "split": {
+    "method": "global_temporal_70_15_15",
+    "cut_val": "1476348398.0",
+    "cut_test": "1573258563.0"
+  },
+  "artifacts": {
+    "als_topn": "/content/drive/MyDrive/movielens32m/artifacts/als_topn.json",
+    "popular_movies": "/content/drive/MyDrive/movielens32m/artifacts/popular_movies.json",
+    "similar_movies": "/content/drive/MyDrive/movielens32m/artifacts/similar_movies.json",
+    "user_history_seed": "/content/drive/MyDrive/movielens32m/artifacts/user_history_seed.parquet",
+    "als_model_dir": "/content/drive/MyDrive/movielens32m/models/als_v1.0.0"
+  },
+  "generatedAt": "2026-09-25T11:49:11.359986Z"
+}

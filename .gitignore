@@ -13,3 +13,6 @@ logs/
 .DS_Store
 # Colab checkpoints on Drive (never in repo)
 checkpoints/data/mr_input/
+
+# Downloaded Drive bundle (1GB: curated, models, seed parquet — big artifacts stay local/Drive)
+movielens32m/
