@@ -1,0 +1,49 @@
+B3.4 ALS TRAIN + B3.5 EVALUATION + SERVING ARTIFACTS (Colab run, 2026-09-25)
+Source: notebooks/Runned/03_als_eval_artifacts.ipynb (verbatim measured outputs, INV1)
+
+=== SPLIT (recreated from nb01 cutoffs — single source of truth) ===
+train=22,399,368 val=4,798,976 test=4,801,860
+KILL-LEAKAGE assert: PASS
+
+=== ALS GRID SEARCH (6 configs, validation RMSE, rank10/50 x reg 0.05/0.10/0.17) ===
+rank= 10 reg= 0.05 -> val RMSE = 0.8606
+rank= 10 reg= 0.10 -> val RMSE = 0.8599
+rank= 10 reg= 0.17 -> val RMSE = 0.8774
+rank= 50 reg= 0.05 -> val RMSE = 0.8487
+rank= 50 reg= 0.10 -> val RMSE = 0.8552
+rank= 50 reg= 0.17 -> val RMSE = 0.8767
+BEST: rank=50, regParam=0.05, val RMSE=0.8487
+(als_grid_search.csv saved to Drive evidence/)
+
+=== TEST RMSE (best config retrained on train+val) ===
+ALS test RMSE      = 0.8336
+MovieMean test RMSE = 0.9939
+improvement: 16.13%   (band [0.6, 1.1] PASS; ALS beats baseline PASS)
+
+=== RANKING METRICS (hit-based Recall, standard NDCG; relevant = rating >= 4.0) ===
+users with >=1 relevant test item: 30,011
+ALS @10: Recall=0.0144 NDCG=0.0015 (n=3,956)
+ALS @20: Recall=0.0346 NDCG=0.0020 (n=3,956)
+Popularity @10: Recall=0.6078 NDCG=0.1585 (n=30,011)
+Popularity @20: Recall=0.6455 NDCG=0.1257 (n=30,011)
+KILL-METRIC ranking: all Recall@K < 1.0 -> PASS
+(metrics.csv saved to Drive evidence/)
+
+NOTE (limitation, disclosed in MODEL_DESIGN): ALS Recall low is expected for
+explicit-feedback ALS with only top-20 candidates/user on a temporal holdout;
+only 3,956/30,011 relevant users are served by ALS (rest cold-start, dropped
+by design) — serving layer falls back to Popularity per contract.
+
+=== SERVING ARTIFACT als_topn.json (contract 3.3) ===
+users with final ALS Top-10: 154,608 (coldStart drop: users chỉ có test ratings bị drop)
+KILL-CONTRACT PASS: 1,546,068 recommendations, 0 already-rated (full Spark check, not sample)
+als_topn.json saved — M2 handoff artifact
+
+=== PERSIST (M2 package) ===
+ALS model saved: models/als_v1.0.0 (Spark ML format)
+user_history_seed.parquet: 32,000,204 rows
+model_card.json: config rank=50, regParam=0.05, maxIter=15, nonnegative=True,
+                 coldStartStrategy=drop, seed=42
+=== FULL M2 PACKAGE: 4 artifacts + ALS model + model_card.json ===
+
+VERIFY: PASS (all KILL gates green)

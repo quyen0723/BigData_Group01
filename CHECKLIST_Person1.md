@@ -16,8 +16,8 @@
 | 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` + `evidence/b3_1_split_baseline.txt` | 70.0/15.0/15.0%, KILL-LEAKAGE PASS; MODEL_DESIGN §1-2 còn phải viết |
 | 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` | RMSE test 0.9939 (band PASS); popularity deterministic PASS; ms=100 |
 | 11 | 3.3 | B3.3 Content-Based Similar-Movie Lists | **Colab** | High | **Done** | 100 | `notebooks/Runned/02_content_based.ipynb` + `evidence/b3_3_content_based.txt` | 80,505 có similar / 7,080 empty khớp EDA §2; 200 contract checks PASS |
-| 12 | 3.4 | B3.4 ALS + precompute Top-N | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/03_als_eval_artifacts.ipynb` ready | Checkpoint dir MANDATORY đã set trong notebook |
-| 13 | 3.5 | B3.5 Evaluation + 4 serving artifacts → metrics.csv | **Colab** | Critical | **In Progress** | 50 | `notebooks/colab/03_als_eval_artifacts.ipynb` ready | KILL-CONTRACT assert trong notebook |
+| 12 | 3.4 | B3.4 ALS + precompute Top-N | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/03_als_eval_artifacts.ipynb` + `evidence/b3_4_als_eval.txt` | BEST rank=50 reg=0.05 val RMSE 0.8487; test RMSE 0.8336 thắng MovieMean 16.13%; als_topn.json 154,608 users, KILL-CONTRACT 0 leaked |
+| 13 | 3.5 | B3.5 Evaluation + 4 serving artifacts → metrics.csv | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/03_als_eval_artifacts.ipynb` + `evidence/b3_4_als_eval.txt` | metrics.csv (RMSE + Recall/NDCG@10/20 ALS vs Popularity); model saved als_v1.0.0 + seed parquet 32M + model_card.json |
 | 14 | 6.1 | B6.1 Retrain candidate version | **Colab** | Critical | Not Started | 0 | — | Sau khi Person 2 streaming append (5.2) |
 | 15 | 6.2 | B6.2 Promotion gate + rollback logic | Colab/Local | High | Not Started | 0 | — | Fail-path phải giữ nguyên active version |
 | 16 | 7.1 | B7.1 Controlled experiment CSV vs Parquet + repro manifest | Local | Medium | Not Started | 0 | — | Warm-up + 3–5 runs, median |

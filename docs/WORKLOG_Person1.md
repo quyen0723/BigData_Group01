@@ -100,3 +100,15 @@
 **Số liệu đo được:** 87,585 phim; 19 genres; X multi-hot (87585, 19) nnz=147,090; **80,505 phim có similar list, 7,080 empty** — khớp TUYỆT ĐỐI với EDA §2 (7,080 phim "(no genres listed)"), cross-check nội bộ nhất quán. Pulp Fiction (296) top5: 6486/130916/128784/6003/148272 đều score 1.0 (cùng tập genre Crime|Drama). 200 phim ngẫu nhiên pass contract checks (no self, score (0,1], rank, sorted). Artifact `similar_movies.json` + stats đã lưu Drive.
 **Nhận xét (ghi MODEL_DESIGN):** genres-only cosine cho score 1.0 với mọi phim cùng tập genre → tie broken theo scan order; limitation overspecialization đã disclose — optional Popularity fusion ở serving. Block-matrix BLOCK=1024 (~358MB/block) chạy ổn trên Colab CPU.
 **Bước kế:** notebook 03 (ALS grid + eval + artifacts — chặng dài 45-90 phút).
+
+## 2026-09-25 — B3.4 + B3.5 DONE trên Colab — PHASE 3 HOÀN TẤT 100% (M2 package đóng gói)
+**Đã làm:** Notebook 03 chạy hoàn tất 12/12 cell trên Colab CPU (giữa session thêm resume mode cho grid cell — commit c159135: nếu als_grid_search.csv có sẵn trên Drive thì load thẳng, skip retraining; hữu ích khi phải shutdown giữa chừng).
+**Số liệu đo được (evidence/b3_4_als_eval.txt, copy verbatim):**
+- Grid 6 config val RMSE: rank10 {0.8606, 0.8599, 0.8774}, rank50 {0.8487, 0.8552, 0.8767} → BEST rank=50 regParam=0.05 (val 0.8487)
+- Test RMSE: ALS **0.8336** vs MovieMean 0.9939 → thắng baseline **16.13%**, band [0.6,1.1] PASS
+- Ranking: ALS Recall@10=0.0144 / @20=0.0346 (n=3,956); Popularity Recall@10=0.6078 / @20=0.6455 (n=30,011); mọi Recall@K < 1.0 → KILL-METRIC PASS
+- als_topn.json: **154,608 users**, 1,546,068 recs, KILL-CONTRACT full Spark anti-join → **0 already-rated PASS**
+- Persist: ALS model als_v1.0.0 (Spark ML format) + user_history_seed.parquet 32,000,204 rows + model_card.json → Drive === FULL M2 PACKAGE ===
+**Nhận xét (limitations → MODEL_DESIGN):** (1) ALS Recall thấp là kỳ vọng: explicit ALS + chỉ 20 candidates/user + temporal holdout; 46,340/200,948 users cold-start bị drop (rating sau cut_test 2019-11) → serving fallback Popularity theo contract. (2) Popularity Recall cao vì top-20 phim phổ thông xuất hiện dày trong test — không phải leakage (đã check KILL-LEAKAGE). (3) KILL-CONTRACT cell chạy ~25-35' vì recs không cache → 2 count() recomputation toàn lineage (đã ghi nhận; bản resume dùng cache nếu cần).
+**Quyết định kỹ thuật (INV6):** chọn rank=50, regParam=0.05 — có số đo: tốt nhất 6 config trên val (0.8487), khớp pattern rank50 > rank10 (~1.3%), reg 0.17 over-regularize.
+**Bước kế:** user copy 4 JSON artifacts + metrics.csv + als_grid_search.csv từ Drive về repo → viết MODEL_DESIGN.md → M2 handoff Person 2.
