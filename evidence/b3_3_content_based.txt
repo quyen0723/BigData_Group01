@@ -1,0 +1,25 @@
+B3.3 CONTENT-BASED SIMILAR MOVIES — COLAB RUN (from notebooks/Runned/02_content_based.ipynb, 2026-09-25)
+SOURCE: executed notebook outputs (copied verbatim)
+
+=== Build ===
+movies: 87,585 (matches PRD)
+genres vocab: 19 (Action..Western; "(no genres listed)" excluded)
+X multi-hot: (87585, 19) float32, nnz=147,090 (avg ~1.68 genres/movie)
+Method: block-matrix cosine (BLOCK=1024 → ~358MB/block), top-M=20 via argpartition
+
+=== Result ===
+movies with non-empty similar list: 80,505 / 87,585
+movies with no genre overlap (empty similar): 7,080
+  → EXACTLY matches EDA §2 count of "(no genres listed)" movies (7,080) — cross-check PASS
+
+=== Gates ===
+Pulp Fiction (296) top5 similar: [(6486, 1.0, 1), (130916, 1.0, 2), (128784, 1.0, 3), (6003, 1.0, 4), (148272, 1.0, 5)]
+  (score 1.0 = identical genre set Crime|Drama — expected for genres-only cosine)
+contract sample checks: 200 movies PASS (no self-ref, score in (0,1], rank 1..M, sorted)
+similar_movies.json + content_based_stats.csv saved to Drive artifacts/
+
+=== Known limitation (→ MODEL_DESIGN) ===
+Genres-only similarity: same-genre-set movies all score 1.0 (ties broken by scan order);
+overspecialization risk documented — optional Popularity fusion at serving (Person 2).
+
+VERIFY: PASS (all gates)

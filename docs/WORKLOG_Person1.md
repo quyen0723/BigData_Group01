@@ -95,3 +95,8 @@
 - Popularity: ms=50/100 cùng top5 [159817, 318, 142115, 858, 50]; ms=500 khác [318, 858, 50, 527, 1221]; deterministic True → PASS
 **Nhận xét:** RMSE MovieMean 0.99 là baseline hợp lý (EDA: mean 3.5404, std 1.059; ALS kỳ vọng 0.75-0.9 phải thắng baseline này). ms=50 vs 100 top5 trùng → chọn ms=100 (an toàn hơn cho long tail, EDA §5: 62.1% phim <10 ratings).
 **Bước kế:** chạy notebook 02 (content-based) trên Colab; split_stats.csv đã ở Drive cho nb03.
+
+## 2026-09-25 — B3.3 DONE trên Colab (runned notebook: notebooks/Runned/02_content_based.ipynb)
+**Số liệu đo được:** 87,585 phim; 19 genres; X multi-hot (87585, 19) nnz=147,090; **80,505 phim có similar list, 7,080 empty** — khớp TUYỆT ĐỐI với EDA §2 (7,080 phim "(no genres listed)"), cross-check nội bộ nhất quán. Pulp Fiction (296) top5: 6486/130916/128784/6003/148272 đều score 1.0 (cùng tập genre Crime|Drama). 200 phim ngẫu nhiên pass contract checks (no self, score (0,1], rank, sorted). Artifact `similar_movies.json` + stats đã lưu Drive.
+**Nhận xét (ghi MODEL_DESIGN):** genres-only cosine cho score 1.0 với mọi phim cùng tập genre → tie broken theo scan order; limitation overspecialization đã disclose — optional Popularity fusion ở serving. Block-matrix BLOCK=1024 (~358MB/block) chạy ổn trên Colab CPU.
+**Bước kế:** notebook 03 (ALS grid + eval + artifacts — chặng dài 45-90 phút).
