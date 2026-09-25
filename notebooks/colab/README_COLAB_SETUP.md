@@ -29,7 +29,7 @@ MyDrive/movielens32m/
 ├── curated.zip          ← bạn upload (Bước 1)
 ├── curated/             ← notebook 01 tự unzip
 ├── artifacts/           ← OUTPUT: popular_movies.json, similar_movies.json, als_topn.json,
-│                          user_history.parquet, model_card.json
+│                          user_history_seed.parquet
 ├── evidence/            ← OUTPUT: split_stats.csv, metrics.csv, als_grid_search.csv, ...
 ├── models/als_v1.0.0/   ← OUTPUT: ALS model saved (Spark ML format — cho B6 retrain gate)
 └── checkpoints/         ← ALS checkpoint dir (MANDATORY, tự tạo)
@@ -40,7 +40,7 @@ MyDrive/movielens32m/
 1. Vào [colab.research.google.com](https://colab.research.google.com) → **File → Upload notebook**
    → chọn `notebooks/colab/01_split_baseline.ipynb` từ repo.
 2. **Runtime → Change runtime type → High-RAM** (nếu account có; không có thì dùng
-   default ~12.7GB — vẫn OK vì đã có checkpoint dir + driver memory 8g + fallback).
+   default ~12.7GB — vẫn OK vì đã có checkpoint dir + driver memory 6g + fallback).
 3. **Runtime → Run all**. Cell đầu sẽ mount Drive (cần authorize Google account).
 
 ## Bước 3 — Chạy theo thứ tự (BẮT BUỘC)
@@ -68,7 +68,7 @@ files.download(f'{EVID}/split_stats.csv')      # và các file khác tương t�
 Copy vào repo:
 - `artifacts/` (repo): 3 file JSON serving artifacts + `model_card.json` → commit (dùng cho M2 handoff)
 - `evidence/` (repo): split_stats.csv, metrics.csv, als_grid_search.csv, content_based_stats.csv
-- **Ở lại Drive (không commit repo — quá lớn):** `user_history.parquet`, `models/als_v1.0.0/` —
+- **Ở lại Drive (không commit repo — quá lớn):** `user_history_seed.parquet
   Person 2 lấy trực tiếp từ Drive khi import Mongo (user_history) và chạy B6 retrain gate (model)
 - Cập nhật CHECKLIST_Person1.md (mục 9–13) + WORKLOG_Person1.md + MODEL_DESIGN.md
 
@@ -76,7 +76,7 @@ Copy vào repo:
 
 - **Checkpoint dir là bắt buộc** cho ALS maxIter=15 — không có nó ALS OOM chết ở iteration 20+
   (verified: stackoverflow 51979584 + Spark docs). Notebook đã set.
-- **Driver memory 8g** set qua `SparkSession.builder.config` — Spark trên Colab chỉ có
+- **Driver memory 6g** set qua `SparkSession.builder.config` — Spark trên Colab chỉ có
   driver (local[*]), executor memory config không có tác dụng.
 - **Fallback nếu OOM (plan B):** giảm grid còn rank=10 only, hoặc sample 20% users
   (`train.sampleBy('userId', fractions=...)`) — chỉ dùng khi đã thử High-RAM + checkpoint.
