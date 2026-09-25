@@ -13,7 +13,7 @@
 | 6 | 1.1–1.2 | B1.EDA EDA_REPORT.md | Local | High | **Done** | 100 | `docs/EDA_REPORT.md` (sinh bởi eda.py, 136 dòng) | KILL-EDA PASS; mọi số tái tạo bằng 1 lệnh |
 | 7 | 2.1 | B2.1 Spark SQL + explain('formatted') | Local | High | **Done** | 100 | `evidence/b2_1_spark_sql.txt` (5 queries + plans) | 14 BroadcastExchange; PartitionFilters year>=2013; Q4 5 Exchange (đã verify) |
 | 8 | 2.2 | B2.2 MapReduce cross-check | Local | Medium | **Done** | 100 | `evidence/b2_2_mapreduce.txt` | 84,432/84,432 khớp, max diff 0.0 — PASS |
-| 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` + `evidence/b3_1_split_baseline.txt` | 70.0/15.0/15.0%, KILL-LEAKAGE PASS; MODEL_DESIGN §1-2 còn phải viết |
+| 9 | 3.1 | B3.1 Split + MODEL_DESIGN §1–2 (seed, rule, leakage) | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` + `evidence/b3_1_split_baseline.txt` | 70.0/15.0/15.0%, KILL-LEAKAGE PASS; MODEL_DESIGN §1-2 đã viết (commit 754e4d3) |
 | 10 | 3.2 | B3.2 Movie Mean + Popularity baselines | **Colab** | High | **Done** | 100 | `notebooks/Runned/01_split_baseline.ipynb` | RMSE test 0.9939 (band PASS); popularity deterministic PASS; ms=100 |
 | 11 | 3.3 | B3.3 Content-Based Similar-Movie Lists | **Colab** | High | **Done** | 100 | `notebooks/Runned/02_content_based.ipynb` + `evidence/b3_3_content_based.txt` | 80,505 có similar / 7,080 empty khớp EDA §2; 200 contract checks PASS |
 | 12 | 3.4 | B3.4 ALS + precompute Top-N | **Colab** | Critical | **Done** | 100 | `notebooks/Runned/03_als_eval_artifacts.ipynb` + `evidence/b3_4_als_eval.txt` | BEST rank=50 reg=0.05 val RMSE 0.8487; test RMSE 0.8336 thắng MovieMean 16.13%; als_topn.json 154,608 users, KILL-CONTRACT 0 leaked |
@@ -27,7 +27,7 @@
 ## Verify gates (đối chiếu sau mỗi bước — INV3)
 - [x] G0: Person 2 dựng mock artifact từ CONTRACTS.md không hỏi lại — contracts + samples đã publish (M0, 2026-09-25)
 - [x] G1 (M1, day 2): Parquet read-back schema/counts consistent — PASS 2026-09-25 (4/4 tables, evidence/b1_3_curated.txt)
-- [ ] G2 (M2, day 5): metrics.csv đầy đủ + 4 artifacts đúng contract → handoff
+- [x] G2 (M2, day 5): metrics.csv đầy đủ + 4 artifacts đúng contract → handoff — PASS 2026-09-25 (als_topn 154,608 users KILL-CONTRACT 0 leaked; model_card + MODEL_DESIGN.md + README §5 consume guide commit 754e4d3)
 - [ ] G3: MapReduce == Spark ± tolerance
 - [ ] G4 (M5): gate fail-path giữ nguyên active version
 - [ ] G5 (M7): demo reproducible từ README

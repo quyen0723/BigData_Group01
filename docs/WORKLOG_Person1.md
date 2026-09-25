@@ -112,3 +112,13 @@
 **Nhận xét (limitations → MODEL_DESIGN):** (1) ALS Recall thấp là kỳ vọng: explicit ALS + chỉ 20 candidates/user + temporal holdout; 46,340/200,948 users cold-start bị drop (rating sau cut_test 2019-11) → serving fallback Popularity theo contract. (2) Popularity Recall cao vì top-20 phim phổ thông xuất hiện dày trong test — không phải leakage (đã check KILL-LEAKAGE). (3) KILL-CONTRACT cell chạy ~25-35' vì recs không cache → 2 count() recomputation toàn lineage (đã ghi nhận; bản resume dùng cache nếu cần).
 **Quyết định kỹ thuật (INV6):** chọn rank=50, regParam=0.05 — có số đo: tốt nhất 6 config trên val (0.8487), khớp pattern rank50 > rank10 (~1.3%), reg 0.17 over-regularize.
 **Bước kế:** user copy 4 JSON artifacts + metrics.csv + als_grid_search.csv từ Drive về repo → viết MODEL_DESIGN.md → M2 handoff Person 2.
+
+## 2026-09-25 (tối) — TỔNG KẾT PHASE 1-3 HOÀN TẤT — M2 HANDOFF ĐÓNG GÓI (gate G2 PASS)
+**Phạm vi đã hoàn thành (mục 1-13 CHECKLIST, 13/13 Done):**
+- B0.1-B0.2: repo skeleton + CONTRACTS.md freeze (4 artifact schema, samples PASS) — tag M0
+- B1.1-B1.3 + EDA: ingest 32,000,204 ratings explicit schema (fix PERMISSIVE+corrupt-col + escape quote RFC-4180), clean 0 critical issues, curated Parquet partition year (read-back 4/4 PASS, gate G1), EDA_REPORT.md 136 dòng mọi số tái tạo bằng 1 lệnh
+- B2.1-B2.2: Spark SQL 5 queries + explain (14 BroadcastExchange, PartitionFilters year>=2013), MapReduce cross-check 84,432/84,432 khớp max diff 0.0
+- B3.1-B3.5 (Colab): temporal split 70/15/15 KILL-LEAKAGE PASS; baselines (MovieMean test RMSE 0.9939, Popularity ms=100 deterministic); content-based 80,505/7,080 khớp EDA §2, 200 contract checks PASS; ALS grid 6 config → BEST rank=50 reg=0.05 (val 0.8487), test RMSE 0.8336 thắng baseline 16.13% band PASS; Recall/NDCG@10/20 full; als_topn.json 154,608 users KILL-CONTRACT full-check 0 leaked; persist model als_v1.0.0 + user_history_seed.parquet 32M + model_card.json
+**Chất lượng xuyên suốt:** 11+ bug Colab thực chạy được fix + ghi log (bugs #1-#11); BCC audit độc lập phát hiện 3 blocker + 14 warn (fix hết trước khi chạy); 12 evidence files; 19 commits GitHub; mọi gate KILL-* PASS.
+**M2 package (Person 2 consume, README_COLAB_SETUP §5):** Drive movielens32m/ = 4 serving artifacts + ALS model v1.0.0 + model_card.json + evidence CSVs. Repo commit 754e4d3: MODEL_DESIGN.md + model_card + popular_movies + evidence CSVs (file lớn als_topn 94MB / similar 82MB / seed parquet / model 27MB ở Drive).
+**Việc còn Person 1 (mục 14-18):** B6.1/B6.2 (retrain + promotion gate — SAU Person 2 streaming), B7.1 (CSV vs Parquet local), B8.1/B8.2 (E2E + evidence pack + release tag). G2 đã tick trong CHECKLIST.
