@@ -24,7 +24,7 @@ api:
   k_default: 10
   k_min: 1
   k_max: 50
-  demo_enabled: true                               # gates GET /demo and GET /debug/users/{userId}
+  demo_enabled: false                              # gates GET /demo and GET /debug/users/{userId}
   kafka_bootstrap_servers_env: "KAFKA_BOOTSTRAP_SERVERS"  # add-demo-web-client D-6/D-7
   ratings_topic: "ratings.v1"                       # must match configs/streaming.yaml kafka.topic
   produce_timeout_seconds: 10                       # POST /ratings: flush() wait before 503
