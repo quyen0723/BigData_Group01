@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MovieLens — Phim dành cho bạn</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #000000; --surface: #0F0F23; --surface-2: #17173a; --border: #2c2c55;
+    --text: #F8FAFC; --muted: #94A3B8;
+    --cta: #E11D48; --cta-hover: #BE123C; --star: #FBBF24; --good: #4ADE80; --bad: #FCA5A5; --focus: #FACC15;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  a { color: var(--text); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+  .icon { width: 1em; height: 1em; fill: currentColor; flex: none; }
+  .icon.stroke { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .skip { position: absolute; left: -999px; top: 8px; background: var(--text); color: #000; padding: 8px 12px; border-radius: 6px; z-index: 50; }
+  .skip:focus { left: 8px; }
+
+  .top {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 18px; letter-spacing: .01em; }
+  .brand .icon { color: var(--cta); font-size: 22px; }
+  .who { display: flex; align-items: center; gap: 10px; }
+  .who .name { font-weight: 600; }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  main:focus { outline: none; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; }
+  h1:focus, #recsTitle:focus { outline: none; }
+  h2 { font-size: 18px; margin: 32px 0 12px; }
+  .muted { color: var(--muted); }
+  .note { color: var(--muted); max-width: 62ch; margin: 0 0 20px; }
+  .err { color: var(--bad); margin: 8px 0 0; min-height: 1.5em; }
+
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px;
+    border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); font-weight: 600;
+    transition: background-color .2s ease, border-color .2s ease;
+  }
+  .btn:hover { border-color: var(--text); }
+  .btn.primary { background: var(--cta); border-color: var(--cta); color: #fff; }
+  .btn.primary:hover { background: var(--cta-hover); border-color: var(--cta-hover); }
+  .btn.ghost { background: transparent; }
+  .btn:disabled { opacity: .55; }
+
+  label { display: block; font-weight: 600; margin: 0 0 6px; }
+  input[type=text] {
+    width: 100%; max-width: 360px; min-height: 44px; padding: 8px 12px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit;
+  }
+
+  .personas { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .persona {
+    text-align: left; min-height: 44px; padding: 16px; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px;
+    transition: border-color .2s ease, background-color .2s ease;
+  }
+  .persona:hover { border-color: var(--cta); background: var(--surface-2); }
+  .persona .pname { font-size: 20px; font-weight: 700; }
+  .persona .taste { color: var(--text); }
+  .persona .meta { color: var(--muted); font-size: 13px; }
+  .create { margin-top: 8px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); max-width: 460px; }
+  .create h2 { margin-top: 0; }
+
+  .invite {
+    border: 1px dashed var(--border); border-radius: var(--radius); padding: 16px; margin: 16px 0; background: var(--surface);
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .card {
+    position: relative; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent, var(--border));
+    border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+    transition: opacity .25s ease;
+  }
+  .card.pending { opacity: .6; }
+  .card .title { font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; padding-right: 48px; }
+  .card .genres { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .card .reason { color: var(--star); font-size: 13px; font-weight: 600; }
+  .card .badge {
+    position: absolute; top: 12px; right: 12px; background: var(--good); color: #052e16; font-size: 12px; font-weight: 800;
+    padding: 2px 8px; border-radius: 999px;
+  }
+  .card .state { color: var(--muted); font-size: 13px; min-height: 1.4em; display: flex; align-items: center; gap: 8px; }
+  .stars { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; padding-top: 4px; }
+  .star {
+    width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; border-radius: 8px; color: var(--muted); font-size: 26px; padding: 0;
+    transition: color .15s ease;
+  }
+  .star.on { color: var(--star); }
+  .star:hover { color: var(--star); }
+  .star:disabled:hover { color: var(--muted); }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--text);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .skeleton { min-height: 150px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; border-style: solid; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  .history { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+  .history li {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 0;
+  }
+  .history .htitle { overflow-wrap: anywhere; min-width: 0; }
+  .history .hmeta { color: var(--muted); font-size: 13px; }
+  .history .hstars { display: inline-flex; align-items: center; gap: 4px; color: var(--star); font-weight: 700; white-space: nowrap; }
+  .history .gone { color: var(--muted); font-style: italic; }
+
+  .toasts {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(92vw, 440px);
+    display: flex; flex-direction: column; gap: 8px; z-index: 40; pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto; display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 10px;
+    background: #1E1B4B; border: 1px solid var(--border); color: var(--text); box-shadow: 0 6px 24px rgba(0,0,0,.6);
+    animation: pop .2s ease-out;
+  }
+  .toast.error { background: #7F1D1D; border-color: #B91C1C; }
+  .toast .icon { margin-top: 3px; color: var(--good); }
+  .toast.error .icon { color: #fff; }
+  @keyframes pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  @media (max-width: 600px) {
+    h1 { font-size: 24px; }
+    .grid, .history { grid-template-columns: 1fr; }
+    .star { width: 44px; height: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01M10.3 3.9L2.4 18a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><path d="M4 4h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1zm3 0v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+</svg>
+<a class="skip" href="#main">Bỏ qua phần đầu trang</a>
+
+<header class="top">
+  <div class="brand"><svg class="icon" aria-hidden="true"><use href="#i-film"/></svg><span>MovieLens</span></div>
+  <div class="who" id="who" hidden>
+    <span class="name" id="whoName"></span>
+    <button class="btn ghost" id="logoutBtn" type="button"><svg class="icon stroke" aria-hidden="true"><use href="#i-out"/></svg>Đăng xuất</button>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+  <section id="chooser">
+    <h1>Chọn tài khoản để bắt đầu</h1>
+    <p class="note">Đây là các tài khoản demo, không có mật khẩu hay xác thực. Mỗi tài khoản gắn với một người dùng thật (đã ẩn danh) trong bộ dữ liệu MovieLens 32M, nên gợi ý bạn thấy là kết quả thật của hệ thống.</p>
+    <div class="personas" id="personas"></div>
+
+    <div id="mineWrap" hidden>
+      <h2>Tài khoản bạn đã tạo</h2>
+      <div class="personas" id="mine"></div>
+    </div>
+
+    <form class="create" id="createForm" novalidate>
+      <h2>Tạo tài khoản mới</h2>
+      <label for="accName">Tên hiển thị</label>
+      <input type="text" id="accName" maxlength="40" autocomplete="off" aria-describedby="accErr">
+      <p class="err" id="accErr" role="alert"></p>
+      <button class="btn primary" type="submit" id="createBtn">Tạo tài khoản</button>
+    </form>
+
+    <p class="muted" style="margin-top:24px"><a href="/admin">Trang quản trị (dành cho kỹ sư)</a></p>
+  </section>
+
+  <section id="home" hidden>
+    <h1 id="hello" tabindex="-1"></h1>
+    <p class="muted" id="sub"></p>
+    <div class="invite" id="invite" hidden>
+      <strong>Hãy đánh giá vài phim bạn đã xem.</strong>
+      <span class="muted"> Chấm sao ở bên dưới, chúng tôi sẽ dùng chúng để hiểu gu của bạn và gợi ý sát hơn.</span>
+    </div>
+    <h2 id="recsTitle" tabindex="-1">Dành cho bạn</h2>
+    <div class="grid" id="recs" aria-busy="false"></div>
+    <section aria-labelledby="historyTitle">
+      <h2 id="historyTitle">Phim bạn đã đánh giá</h2>
+      <ul class="history" id="history"></ul>
+    </section>
+  </section>
+</main>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Persona chỉ mô tả bằng gu xem phim, không có tuổi/giới tính (PRD §3.2). userId là người dùng MovieLens thật.
+  var PERSONAS = [
+    { name: "An", userId: 700008, taste: "Mới xem vài phim, thích phim hình sự" },
+    { name: "Bình", userId: 1, taste: "Khán giả lâu năm, mê chính kịch và tình cảm" },
+    { name: "Chi", userId: 127249, taste: "Thích phim hài, phiêu lưu và viễn tưởng" }
+  ];
+  var SESSION_KEY = "mlapp.account", ACCOUNTS_KEY = "mlapp.accounts";
+  var GENRE_COLORS = {
+    Action: "#e05353", Adventure: "#e0a030", Animation: "#3fb87f", Children: "#4fd1c5", Comedy: "#f2c94c",
+    Crime: "#8a4fff", Documentary: "#6c757d", Drama: "#4f8cff", Fantasy: "#c04fff", "Film-Noir": "#777",
+    Horror: "#a30000", IMAX: "#00b0c0", Musical: "#ff70a6", Mystery: "#7a5cff", Romance: "#ff6f91",
+    "Sci-Fi": "#00c2ff", Thriller: "#ff8c42", War: "#8c8c00", Western: "#c08040"
+  };
+
+  var state = { account: null, pollSeconds: 60, loadSeq: 0, pollTimers: [], pending: 0, lastLoadAt: 0, lastRecIds: "" };
+
+  function $(id) { return document.getElementById(id); }
+
+  // sessionStorage / localStorage can be blocked; the page must still work without them.
+  var store = {
+    get: function (area, key) { try { return JSON.parse(window[area].getItem(key)); } catch (e) { return null; } },
+    set: function (area, key, value) { try { window[area].setItem(key, JSON.stringify(value)); } catch (e) { /* no storage: run without memory */ } },
+    remove: function (area, key) { try { window[area].removeItem(key); } catch (e) { /* ignore */ } }
+  };
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function icon(id, stroke) {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon" + (stroke ? " stroke" : ""));
+    svg.setAttribute("aria-hidden", "true");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#" + id);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function fetchJson(url, opts) {
+    return fetch(url, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, status: r.status, body: b }; });
+    }).catch(function () { return { ok: false, status: 0, body: {} }; });
+  }
+
+  // ---------- toasts ----------
+  function toast(message, isError) {
+    var t = el("div", "toast" + (isError ? " error" : ""));
+    t.appendChild(icon(isError ? "i-alert" : "i-check", true));
+    t.appendChild(el("span", null, message));
+    $("toasts").appendChild(t);
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 4000);
+  }
+
+  // ---------- reasons in user language (design D-4) ----------
+  function sourcesOf(item) { return item.source.split("+"); }
+  function reasonOf(item) {
+    var s = sourcesOf(item);
+    if (s.indexOf("als") !== -1) return "Dành riêng cho bạn";
+    if (s.indexOf("new") !== -1) return "Mới thêm";
+    if (s.indexOf("content") !== -1) return "Giống phim bạn đã thích";
+    return "Đang được yêu thích";
+  }
+  function accentFor(genres) { return GENRE_COLORS[(genres || "").split("|")[0]] || "#2c2c55"; }
+
+  // ---------- views ----------
+  function showChooser() {
+    clearPolls();
+    state.account = null;
+    store.remove("sessionStorage", SESSION_KEY);
+    $("home").hidden = true; $("who").hidden = true; $("chooser").hidden = false;
+    document.title = "MovieLens — Chọn tài khoản";
+    renderPersonas();
+    renderMine();
+    $("accErr").textContent = ""; $("accName").value = "";
+    $("main").focus();
+  }
+
+  function personaButton(name, userId, taste) {
+    var b = el("button", "persona");
+    b.type = "button";
+    b.appendChild(el("span", "pname", name));
+    if (taste) b.appendChild(el("span", "taste", taste));
+    var meta = el("span", "meta", "Người dùng MovieLens #" + userId);
+    meta.setAttribute("data-user", userId);
+    b.appendChild(meta);
+    b.addEventListener("click", function () { login({ name: name, userId: userId }); });
+    return b;
+  }
+
+  function renderPersonas() {
+    var box = $("personas");
+    box.innerHTML = "";
+    PERSONAS.forEach(function (p) {
+      var b = personaButton(p.name, p.userId, p.taste);
+      box.appendChild(b);
+      fetchJson("/users/" + p.userId + "/ratings?limit=1").then(function (res) {
+        if (res.ok) b.querySelector(".meta").textContent = res.body.total + " phim đã đánh giá · người dùng MovieLens #" + p.userId;
+      });
+    });
+  }
+
+  function renderMine() {
+    var mine = store.get("localStorage", ACCOUNTS_KEY) || [];
+    var box = $("mine");
+    box.innerHTML = "";
+    $("mineWrap").hidden = mine.length === 0;
+    mine.forEach(function (a) { box.appendChild(personaButton(a.name, a.userId, "Tài khoản bạn đã tạo")); });
+  }
+
+  function login(account) {
+    state.account = account;
+    store.set("sessionStorage", SESSION_KEY, account);
+    $("chooser").hidden = true; $("home").hidden = false; $("who").hidden = false;
+    $("whoName").textContent = account.name;
+    $("hello").textContent = "Xin chào, " + account.name;
+    $("sub").textContent = "";
+    document.title = "MovieLens — Phim dành cho " + account.name;
+    $("history").innerHTML = "";
+    loadRecs();
+    loadHistory();
+    $("hello").focus();
+  }
+
+  // ---------- recommendations ----------
+  function skeleton() {
+    var box = $("recs");
+    box.innerHTML = "";
+    box.setAttribute("aria-busy", "true");
+    for (var i = 0; i < 10; i++) box.appendChild(el("div", "card skeleton"));
+  }
+
+  // `silent` (refresh after returning to the tab): no skeleton, and the grid is only redrawn when the
+  // list actually changed, so cards under the pointer or in the middle of a rating are left alone.
+  function loadRecs(silent) {
+    var seq = ++state.loadSeq, uid = state.account.userId;
+    state.lastLoadAt = Date.now();
+    if (silent !== true) { state.lastRecIds = ""; skeleton(); }
+    return fetchJson("/recommendations/" + uid + "?k=10").then(function (res) {
+      if (seq !== state.loadSeq) return;       // a newer load replaced this one
+      var box = $("recs");
+      if (silent === true) {
+        if (!res.ok) return;
+        var ids = res.body.recommendations.map(function (r) { return r.movieId; }).join(",");
+        if (ids === state.lastRecIds) return;
+      }
+      box.setAttribute("aria-busy", "false");
+      box.innerHTML = "";
+      if (!res.ok) {
+        var p = el("p", "muted", "Chưa tải được gợi ý. ");
+        var retry = el("button", "btn", "Thử lại");
+        retry.type = "button";
+        retry.addEventListener("click", loadRecs);
+        p.appendChild(retry);
+        box.appendChild(p);
+        return;
+      }
+      state.lastRecIds = res.body.recommendations.map(function (r) { return r.movieId; }).join(",");
+      res.body.recommendations.forEach(function (item) { box.appendChild(renderCard(item)); });
+    });
+  }
+
+  function renderCard(item) {
+    var card = el("div", "card");
+    card.style.setProperty("--accent", accentFor(item.genres));
+    var isNew = sourcesOf(item).indexOf("new") !== -1;
+    if (isNew) card.appendChild(el("span", "badge", "Mới"));
+    card.appendChild(el("div", "title", item.title));
+    card.appendChild(el("div", "genres", item.genres.split("|").join(" · ")));
+    card.appendChild(el("div", "reason", reasonOf(item)));
+    var stars = el("div", "stars");
+    stars.setAttribute("role", "group");
+    stars.setAttribute("aria-label", "Chấm sao cho " + item.title);
+    for (var v = 1; v <= 5; v++) {
+      (function (value) {
+        var b = el("button", "star");
+        b.type = "button";
+        b.setAttribute("aria-label", "Chấm " + value + " sao cho " + item.title);
+        b.appendChild(icon("i-star"));
+        b.addEventListener("click", function () { rate(item, value, card, stars); });
+        b.addEventListener("mouseenter", function () { preview(stars, value); });
+        b.addEventListener("focus", function () { preview(stars, value); });
+        stars.appendChild(b);
+      })(v);
+    }
+    stars.addEventListener("mouseleave", function () { preview(stars, 0); });
+    stars.addEventListener("focusout", function () { preview(stars, 0); });
+    card.appendChild(stars);
+    card.appendChild(el("div", "state"));
+    return card;
+  }
+
+  function preview(stars, n) {
+    var btns = stars.querySelectorAll(".star");
+    for (var i = 0; i < btns.length; i++) btns[i].classList.toggle("on", i < n);
+  }
+
+  // ---------- rating loop (design D-5) ----------
+  function setState(card, text, busy) {
+    var s = card.querySelector(".state");
+    s.innerHTML = "";
+    if (busy) s.appendChild(el("span", "spinner"));
+    if (text) s.appendChild(el("span", null, text));
+  }
+  function lock(card, locked) {
+    card.classList.toggle("pending", locked);
+    var btns = card.querySelectorAll(".star");
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = locked;
+  }
+
+  function rate(item, value, card, stars) {
+    var eventId = crypto.randomUUID();
+    lock(card, true);
+    preview(stars, value);
+    setState(card, "Đang gửi đánh giá…", true);
+    // The star that had focus is disabled now; keep keyboard users in this card instead of dropping to <body>.
+    var st = card.querySelector(".state");
+    st.tabIndex = -1;
+    st.focus();
+    fetchJson("/ratings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: state.account.userId, movieId: item.movieId, rating: value, eventId: eventId })
+    }).then(function (res) {
+      if (res.status !== 202) {
+        toast("Chưa lưu được đánh giá. Vui lòng thử lại.", true);
+        setState(card, "", false);
+        lock(card, false);
+        preview(stars, 0);
+        return;
+      }
+      toast("Đã lưu đánh giá " + value + " sao cho “" + item.title + "”");
+      setState(card, "Đang cập nhật gợi ý…", true);
+      state.pending++;
+      poll(eventId, card, 0, state.account.userId);
+    });
+  }
+
+  function clearPolls() {
+    state.pollTimers.forEach(function (t) { clearTimeout(t); });
+    state.pollTimers = [];
+    // Cancelled polls never get to decrement their own count; if this stayed above 0 the
+    // "refresh when the tab returns" would be blocked for the rest of the page's life.
+    state.pending = 0;
+  }
+
+  function poll(eventId, card, attempt, uid) {
+    if (!state.account || state.account.userId !== uid) { state.pending = Math.max(0, state.pending - 1); return; }   // logged out / switched account
+    if (attempt >= state.pollSeconds) {
+      state.pending = Math.max(0, state.pending - 1);
+      setState(card, "Đánh giá đã lưu, gợi ý sẽ cập nhật sau.", false);
+      return;
+    }
+    fetchJson("/ratings/" + eventId).then(function (res) {
+      if (!state.account || state.account.userId !== uid) { state.pending = Math.max(0, state.pending - 1); return; }
+      if (res.ok && res.body.status === "applied") {
+        state.pending = Math.max(0, state.pending - 1);
+        toast("Gợi ý của bạn đã được cập nhật");
+        loadRecs().then(function () {
+          // The grid was redrawn, so focus that sat inside it is gone: put it back at the section heading.
+          if (document.activeElement === document.body) $("recsTitle").focus();
+        });
+        loadHistory();
+        return;
+      }
+      state.pollTimers.push(setTimeout(function () { poll(eventId, card, attempt + 1, uid); }, 1000));
+    });
+  }
+
+  // ---------- rating history ----------
+  function loadHistory() {
+    var uid = state.account.userId;
+    return fetchJson("/users/" + uid + "/ratings?limit=50").then(function (res) {
+      if (!state.account || state.account.userId !== uid || !res.ok) return;
+      var total = res.body.total, ul = $("history");
+      ul.innerHTML = "";
+      $("invite").hidden = total !== 0;
+      $("sub").textContent = total === 0 ? "Bạn chưa đánh giá phim nào." : "Bạn đã đánh giá " + total + " phim.";
+      $("historyTitle").textContent = "Phim bạn đã đánh giá" + (total ? " (" + total + ")" : "");
+      if (total === 0) { ul.appendChild(el("li", "muted", "Chưa có phim nào. Hãy chấm sao một vài phim ở trên.")); return; }
+      res.body.items.forEach(function (it) {
+        var li = el("li");
+        var left = el("div", "htitle");
+        if (it.inCatalog) {
+          left.appendChild(el("div", null, it.title));
+          left.appendChild(el("div", "hmeta", it.genres.split("|").join(" · ")));
+        } else {
+          left.appendChild(el("div", "gone", "Phim đã được gỡ khỏi danh mục"));
+        }
+        var right = el("span", "hstars");
+        right.appendChild(icon("i-star"));
+        right.appendChild(el("span", null, it.rating == null ? "—" : String(it.rating)));
+        right.setAttribute("aria-label", it.rating == null ? "chưa có số sao" : it.rating + " sao");
+        li.appendChild(left); li.appendChild(right);
+        ul.appendChild(li);
+      });
+    });
+  }
+
+  // ---------- create account (design D-2) ----------
+  function pickFreshUser(triesLeft) {
+    if (triesLeft <= 0) return Promise.resolve(null);
+    var id = 500000 + Math.floor(Math.random() * 99999);
+    return fetchJson("/users/" + id + "/ratings?limit=1").then(function (res) {
+      if (res.ok && res.body.total === 0) return id;
+      return pickFreshUser(triesLeft - 1);
+    });
+  }
+
+  $("createForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var name = $("accName").value.trim(), err = $("accErr");
+    if (name.length < 1 || name.length > 40) { err.textContent = "Vui lòng nhập tên từ 1 đến 40 ký tự."; $("accName").focus(); return; }
+    err.textContent = "";
+    var btn = $("createBtn");
+    btn.disabled = true;
+    pickFreshUser(5).then(function (userId) {
+      btn.disabled = false;
+      if (userId === null) { err.textContent = "Chưa tạo được tài khoản. Vui lòng thử lại."; return; }
+      var mine = store.get("localStorage", ACCOUNTS_KEY) || [];
+      var account = { name: name, userId: userId };
+      mine.push(account);
+      store.set("localStorage", ACCOUNTS_KEY, mine);
+      login(account);
+    });
+  });
+
+  $("logoutBtn").addEventListener("click", showChooser);
+
+  // Refresh when the tab comes back (design D-7): a movie added on the admin tab shows up without a click.
+  // Not while a rating is still pending (a reload would unlock its stars and allow a double rating; the
+  // poll reloads when it is applied) and not within 2 s of a load (the browser fires this on first show).
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden || !state.account || state.pending > 0) return;
+    if (Date.now() - state.lastLoadAt < 2000) return;
+    loadRecs(true); loadHistory();
+  });
+
+  // ---------- start ----------
+  function start() {
+    // Best-effort: how long the API says to wait for a rating to be applied (default 60 s).
+    fetchJson("/debug/system").then(function (res) {
+      if (res.ok && res.body.demo && res.body.demo.ratingPollTimeoutSeconds) state.pollSeconds = res.body.demo.ratingPollTimeoutSeconds;
+    });
+    var saved = store.get("sessionStorage", SESSION_KEY);
+    if (saved && saved.userId) login(saved); else showChooser();
+  }
+  start();
+})();
+</script>
+</body>
+</html>
