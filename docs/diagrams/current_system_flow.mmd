@@ -1,0 +1,84 @@
+---
+title: MovieLens — luồng hệ thống hiện tại (as-built, không phải bản đề xuất ban đầu)
+config:
+  theme: base
+  themeVariables:
+    fontFamily: "IBM Plex Mono, monospace"
+    fontSize: 14px
+  flowchart:
+    curve: basis
+    nodeSpacing: 40
+    rankSpacing: 60
+---
+flowchart TB
+
+  DRIVE[("Google Drive<br/>movielens32m.zip")]
+  CURATED[("Curated Parquet<br/>curated_ratings (year) · curated_movies")]
+  MONGO[("MongoDB serving store<br/>movies · popular_movies · similar_movies<br/>user_recommendations · user_history · user_rated<br/>serving_meta · rating_events · pipeline_state")]
+  KAFKA[["Kafka ratings.v1<br/>key = userId"]]
+
+  subgraph P1["① OFFLINE — chuẩn bị dữ liệu và train model (Person 1, Colab, ngoài stack Docker)"]
+    direction LR
+    RAW["MovieLens 32M<br/>ratings.csv · movies.csv"] --> ETL["PySpark ETL<br/>clean + join"]
+    ETL --> CURATED
+    CURATED --> TRAIN["ALS training<br/>rank=50 reg=0.05 (Colab)"]
+    TRAIN --> BUNDLE["M2 handoff bundle<br/>model_card.json · als_v1.0.0/<br/>popular_movies · similar_movies<br/>als_topn.json · user_history_seed"]
+    BUNDLE --> DRIVE
+  end
+
+  subgraph P2["② BOOTSTRAP LOAD — nạp vào MongoDB (src/loaders/*.py, chạy khi có handoff mới)"]
+    direction LR
+    DRIVE --> UNZIP["giải nén movielens32m/<br/>(mount /data)"]
+    UNZIP --> LOADERS["bootstrap_registry · build_movies<br/>build_user_state · load_artifacts<br/>create_indexes"]
+    LOADERS --> MONGO
+  end
+
+  subgraph P3["③ ONLINE SERVING — mỗi lần user xem gợi ý (đồng bộ, real-time)"]
+    direction LR
+    U1(["User<br/>/demo hoặc /docs"]) -->|"GET /recommendations/{userId}"| API1["src/api/main.py"]
+    API1 --> SVC["serving/service.py<br/>router 0/few/enough + fallback"]
+    SVC --> RESP["exclude rated → RRF fusion<br/>→ enrich → Top-N JSON"]
+    RESP --> U1
+  end
+  MONGO -.->|"read: pointer · history<br/>artifacts · rated · movies"| SVC
+
+  subgraph P4["④ FEEDBACK — user rate phim (bất đồng bộ, qua Kafka)"]
+    direction LR
+    U2(["User<br/>bấm sao trên /demo"]) -->|"POST /ratings"| API2["src/api/main.py<br/>validate → eventId/timestamp"]
+    API2 -->|"202 Accepted"| U2
+    U2 -.->|"GET /ratings/eventId<br/>poll pending → applied"| API2
+    API2 --> KAFKA
+    CLI["streaming/producer.py<br/>(CLI, test/replay)"] --> KAFKA
+    KAFKA --> PIPE["streaming/pipeline.py"]
+    PIPE --> Q1["Q1 raw_events/<br/>file sink"]
+    Q1 --> VAL["validate<br/>(streaming/events.py)"]
+    VAL -->|"sai"| QUAR[("quarantine/")]
+    VAL -->|"hợp lệ"| DEDUP["watermark 10p<br/>dedup eventId"]
+    DEDUP --> SB["Q2 foreachBatch<br/>serve_batch"]
+  end
+  SB --> MONGO
+  SB -->|"append (batch writer)"| CURATED
+
+  subgraph P5["⑤ RETRAIN — định kỳ (Person 2 điều phối, Person 1 train — src/orchestration/*.py)"]
+    direction LR
+    MONGO -->|"đếm event mới"| TRIG["retrain_trigger.py<br/>N_min hoặc --force"]
+    TRIG --> HAND["handoff<br/>delta + manifest"]
+    HAND -->|"Drive"| RET["Person 1 train<br/>candidate v1.1.0"]
+    RET --> STAGE["stage_candidate.py"]
+    STAGE --> GATE{"promotion_gate.py<br/>G1..G7"}
+    GATE -->|"PASS"| ACT["manage_versions.py<br/>đổi con trỏ serving_meta"]
+    GATE -->|"FAIL"| KEEP["giữ version đang chạy"]
+  end
+  ACT --> MONGO
+
+  classDef p1 fill:#1a2744,stroke:#5b8cff,color:#c7d6ff
+  classDef p2 fill:#123322,stroke:#34c77b,color:#bdf5d4
+  classDef store fill:#3a2a08,stroke:#e0a934,color:#ffe4a3
+  classDef actor fill:#3a1414,stroke:#ef6461,color:#ffd0cd
+  classDef gate fill:#2a1a3d,stroke:#b073e0,color:#e7cdfb
+
+  class RAW,ETL,TRAIN,BUNDLE,RET p1
+  class UNZIP,LOADERS,API1,SVC,RESP,API2,CLI,PIPE,Q1,VAL,DEDUP,SB,TRIG,HAND,STAGE,ACT,KEEP p2
+  class DRIVE,CURATED,MONGO,KAFKA,QUAR store
+  class U1,U2 actor
+  class GATE gate

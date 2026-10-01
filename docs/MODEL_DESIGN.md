@@ -97,6 +97,39 @@ Sanity gate: mọi Recall@K < 1.0 → PASS (methodology không leakage).
 - Deterministic: seed=42, tie-breaks tường minh (support → movieId), cutoffs tái tạo từ `split_stats.csv` (single source of truth cho split giữa các notebook).
 - Mọi gate KILL-* nhúng trong notebook — FAIL là dừng, không chạy tiếp.
 
+## 9b. Ngưỡng T (few/enough history) — quy tắc quyết định (Person 2, WBS 5.1)
+
+> Viết TRƯỚC khi chạy thí nghiệm (INV6). Phối hợp Person 1: cần `ALSModel.load()` trên
+> model `als_v1.0.0` — hiện **BLOCKED** vì 2 file `userFactors/part-00000`, `part-00001`
+> trên Drive bị 0 byte (đã báo Quyên, xem `CHECKLIST_Person2.md` mục Blockers). Mục này
+> ghi quy tắc quyết định trước; §5.2–5.4 (chạy thí nghiệm, cập nhật T thật) sẽ hoàn thành
+> ngay khi model sửa xong.
+
+**Vì sao không dùng `als_topn.json`/`metrics.csv` hiện có**: file `als_topn.json` đã loại
+toàn bộ phim user rate (kể cả trong tập test), nên HitRate trên test bằng 0 theo cấu trúc —
+không dùng được để so sánh. `metrics.csv` hiện tại so ALS (3,956 user) với Popularity
+(30,011 user) trên **hai tập user khác nhau** — không so sánh công bằng được, cần đo lại
+trên cùng một tập user.
+
+**Tập user dùng để đo**: có ≥ 1 rating trước `cut_test` (1573258563, 2019-11-09), có ≥ 1
+phim relevant (rating ≥ 4.0) sau `cut_test`, và có user factor trong ALS (không bị
+`coldStartStrategy=drop`). Cả 3 chiến lược (ALS, Content, Popularity) đo trên **đúng cùng
+tập user này**.
+
+**Bucket theo số tương tác trước `cut_test`**: `[1–4] [5–9] [10–19] [20–49] [50–99] [100+]`.
+Đo HitRate@10 và NDCG@10 mỗi bucket, kèm n và khoảng tin cậy 95% (bootstrap).
+
+**Quy tắc quyết định** (chốt trước khi chạy, không sửa sau khi thấy kết quả):
+- T = cận dưới của bucket nhỏ nhất mà từ đó trở lên, HitRate@10 của ALS ≥ Content ở **mọi**
+  bucket cao hơn hoặc bằng.
+- Nếu không bucket nào thoả: T = cận dưới của bucket cao nhất, ghi rõ lý do.
+- Nếu mọi bucket đều thoả (ALS thắng ngay từ bucket đầu): T = 1.
+- Nếu Popularity thắng cả ALS lẫn Content ở mọi bucket: báo cáo trung thực, không đổi quy
+  tắc, ghi đề xuất tăng trọng số fusion `β_p` (`configs/serving.yaml`) thay vì hạ thấp T.
+
+Kết quả (khi chạy được): `evidence/p2_tier_threshold.csv` + cập nhật `T_few_enough` trong
+`configs/serving.yaml` (bỏ nhãn "PROVISIONAL"), diễn giải bổ sung vào mục này.
+
 ## 10. Bước tiếp theo
 
 - **M2 handoff → Person 2**: import 3 collection Mongo + sinh `user_history` từ seed + streaming pipeline (B4-B5).

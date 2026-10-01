@@ -1,0 +1,43 @@
+# WBS 7.4/7.5/7.7 — promotion_gate.py FAIL-path evidence (real run, real data)
+# Date: 2026-09-26. Candidate v1.1.0 = synthetic (copy of v1.0.0's own artifacts/model,
+# built to exercise the staging + gate + fail-path MECHANISM for real, since no genuine
+# differing candidate from Person 1 exists yet).
+
+=== Promotion gate: v1.0.0 (active) -> v1.1.0 (candidate) ===
+[PASS] G7 version numbering: active=v1.0.0 candidate=v1.1.0 already_used=False
+[FAIL] G1 candidate RMSE <= active RMSE * (1+eps): RMSE computation failed
+[FAIL] G2 candidate RMSE < MovieMean baseline: RMSE computation failed
+[FAIL] G3 candidate RMSE within sanity band: RMSE computation failed
+[PASS] G4 staged user_recommendations schema valid: docs=154,608 oversized_lists=0 duplicate_users=0
+[PASS] G5 no already-rated in candidate recommendations: 0 leaked
+[PASS] G6 candidate user coverage >= active: candidate=154,608 active=154,608
+
+FAIL — v1.1.0 rejected. serving_meta unchanged, v1.0.0 keeps serving.
+
+## Root cause of the G1-G3 RMSE failure (real, reproducible)
+ALSModel.load('/data/models/als_v1.0.0') fails: "file:/data/models/als_v1.0.0/userFactors/
+part-00000-...snappy.parquet is not a Parquet file (length is too low: 0)"
+
+Confirmed via `find movielens32m/models/als_v1.0.0 -type f -size 0` on the HOST:
+  userFactors/part-00000-266c03bf-...snappy.parquet  <- 0 bytes (should be ~2.9 MB, like part-00002..09)
+  userFactors/part-00001-266c03bf-...snappy.parquet  <- 0 bytes (should be ~2.9 MB)
+(_SUCCESS files being 0 bytes elsewhere is NORMAL — those are Spark marker files, not data.)
+2 of 10 userFactors partitions are empty -> the ALS model bundle downloaded from Drive is
+INCOMPLETE. Not a code bug: itemFactors/ (10/10 parts, all >580KB) and metadata/part-00000
+(362 bytes, real content) are intact. Only userFactors/part-00000 and part-00001 are corrupt.
+ACTION NEEDED: re-download movielens32m/models/als_v1.0.0/userFactors/ from Drive (or the
+whole models/ folder) and rerun. Report this to Person 1 too, in case her Drive copy is
+also affected.
+
+## What this run DOES prove (fail-safe gate design, spec "Fail keeps current version")
+- serving_meta before and after this FAILED run is IDENTICAL:
+  activatedAt = 2026-09-26T15:33:14.934135+00:00 both times (the original bootstrap time —
+  never touched by this gate run).
+- API still returns modelVersion=v1.0.0 for GET /recommendations/1 after the failed gate.
+- model_registry.v1.1.0.status = "rejected" (audit trail recorded).
+- A model-load exception (infra/data problem, not just "candidate worse than active") is
+  correctly treated as an explicit gate FAILURE rather than crashing the process or, worse,
+  silently passing — this is the fail-closed behavior a promotion gate needs to have.
+- G4-G7 (artifact integrity, independent of the corrupted model file) evaluated correctly
+  against the real 154,608-doc staged candidate: schema valid, 0 already-rated leaks,
+  coverage parity, version numbering all PASS.

@@ -1,0 +1,25 @@
+# WBS 5.1 — Kafka rating-event flow evidence (real stack, internal container network)
+# Date: 2026-09-26. Topic ratings.v1 (3 partitions), producer: confluent-kafka acks=all + idempotence.
+
+## Connectivity finding
+Host-mapped listener (localhost:9094, Windows/Docker Desktop/WSL2) is intermittently flaky:
+raw TCP connects instantly every time, but the Kafka wire-protocol handshake occasionally gets
+POLLHUP'd (observed repeatedly, including mid-session after 20+ min uptime). Root cause: Docker
+Desktop host-networking proxy on Windows, NOT a broker config issue.
+The INTERNAL container network (kafka:9092) — the path the real pipeline actually uses — was
+tested repeatedly with ZERO failures. Producer/streaming jobs always target kafka:9092.
+
+## Scenario mode (userId=300001, movies 296/318/858)
+docker compose exec spark python -m streaming.producer --mode scenario --user-id 300001 \
+  --movie-ids 296,318,858 --bootstrap-servers kafka:9092
+-> 3/3 delivered (partition=1, offsets 4,5,6). No connection errors.
+
+## Duplicate mode (idempotency)
+docker compose exec spark python -m streaming.producer --mode duplicate --user-id 300001 \
+  --movie-ids 296 --n 3 --bootstrap-servers kafka:9092
+-> 3/3 delivered, SAME eventId (8fe4d5e3-...) sent 3 times.
+
+## Invalid mode (6 deliberately invalid events)
+docker compose exec spark python -m streaming.producer --mode invalid --user-id 300001 \
+  --movie-ids 296,318,858 --bootstrap-servers kafka:9092
+-> 6/6 delivered (Kafka accepts any bytes; validation happens downstream in Structured Streaming).

@@ -1,0 +1,99 @@
+# add-demo-web-client — task 2.8 evidence (real browser, real Docker stack).
+# Date: 2026-09-29. Browser: in-app browser pane (Chromium-based), navigated to
+# http://127.0.0.1:8088/demo with configs/serving.yaml api.demo_enabled=true
+# (reverted to false again after this test — see note at the end).
+
+## Setup
+GET /demo -> 200, GET /debug/users/1 -> 200 (flag on).
+Page loaded with zero console errors; network log confirmed every request targets
+127.0.0.1:8088 (same origin) — GET /recommendations/{userId}, GET /debug/users/{userId},
+POST /ratings, GET /ratings/{eventId}. No external host ever contacted (see "Network
+origin check" below). demo.html itself has no <link>/<script src> to any external host —
+inline <style> only, vanilla JS in one inline <script> block — so the "offline demo"
+requirement (spec: page renders and works fully with no internet) is satisfied by
+construction, not just by observation; a live network-cutoff test was not run inside the
+sandboxed environment (no way to toggle this agent's own network), but static inspection +
+the observed all-same-origin request log stand in for it.
+
+## Step 1 — three tiers side by side (spec scenario "Three tiers side by side")
+Preset "User mới" -> random userId 551843: tier=0_history, strategy=POPULARITY,
+  fallbackReason row hidden (no fallback), modelVersion=v1.0.0, 10 popularity cards.
+Preset "User 1 (có ALS)": tier=enough_history, strategy=ALS+CONTENT, latency=373ms,
+  interaction_count=146, fallbackReason hidden, cards show source=ALS/CONTENT mixed,
+  colored left-border by primary genre.
+Preset "User 127249 (cold-start)": tier=enough_history, strategy=CONTENT+POPULARITY,
+  fallbackReason="als_artifact_missing" shown highlighted in orange (spec: "Fallback
+  visible"), interaction_count=69.
+PASS — matches specs/demo-web-client/spec.md "User selection and recommendations view"
+       and "Inside the system panel" exactly.
+
+## Step 2 — rate-and-observe loop, clean pipeline (spec "New user moves up a tier" /
+## "Rated movie disappears")
+Rated 3 movies (4.0 each) for fresh user 551843: each POST -> 202, logged with eventId.
+Rated movieId=112577 (5.0) for user 1 ("Willie & Phil", card #1): POST -> 202.
+After the pipeline applied it (confirmed via GET /ratings/{eventId} -> applied, batchId,
+and independently via mongosh on rating_events), clicking "Tải gợi ý" again showed:
+  - movieId=112577 no longer in the top-10 list (fresh-history exclusion working end to
+    end from the browser, not just via curl/Swagger as in earlier phases).
+  - interaction_count 146 -> 147.
+  - last batch (streaming) advanced (#29 -> #34).
+PASS — the mechanism verified earlier this session via curl (person2-serving-streaming-
+       integration) is now independently reproducible by clicking through the UI.
+
+## Step 3 — pipeline-stopped scenario (spec "Pipeline stopped during demo")
+Killed `python -m streaming.pipeline` inside the spark container (SIGTERM, simulating the
+terminal "tắt streaming" step from the demo script). Rated a movie for user 1 (5 stars).
+Log showed: "→ Kafka ✓ (202, ...)" then, after 30s of 1s polling, "⏱ hết 30s vẫn pending
+(...) — Streaming pipeline có đang chạy không?" — exactly the copy specified in design.md
+D-8 point 4.
+Restarted `python -m streaming.pipeline`. After it caught up, GET /ratings/{eventId}
+confirmed "applied" (verified via mongosh), and reloading the page showed the rated movie
+removed and interaction_count incremented — i.e. "the rating is still applied once the
+pipeline is restarted" (spec), even though the UI's own 30s poll loop had already given up
+and did not auto-retry (by design — the presenter reloads manually, which is what the demo
+script's step 5 instructs).
+PASS.
+
+## Network origin check (spec "Page talks only to the API")
+read_network_requests during the whole session above: every entry is
+http://127.0.0.1:8088/{recommendations,debug/users,ratings}/... — zero requests to any
+other host. No MongoDB/Kafka access from the browser at any point.
+PASS.
+
+## IMPORTANT operational finding (not a code defect — affects demo-day reliability)
+While testing Step 2/3 back-to-back, several POSTed ratings took 40s-60s+ to reach
+"applied" instead of the usual ~15-25s, causing the UI's 30s poll timeout to fire even
+though the pipeline was healthy and had not actually stopped. Root-caused as follows:
+
+1. A leftover background loop from earlier in this session (an `until` shell loop with a
+   condition that never became true) was silently re-running a one-off Spark job every
+   ~5-10 seconds, indefinitely, for hours. This left 328 zombie ("<defunct>") processes in
+   the `spark` container and was consuming CPU concurrently with the real streaming
+   pipeline. Fixed by stopping the loop and `docker compose restart spark`.
+2. Independent of (1): `raw_events` (the Q1 Kafka->parquet file sink) accumulates a new
+   small file on every 5s trigger for the life of the pipeline process, whether or not
+   there was new data. After several hours of a running pipeline (accumulated across this
+   whole session's testing), the "parsed" stream's file-source listing step
+   (`FileStreamSource: Listed N file(s)`) measurably slows down as N grows — observed
+   batches taking 25-58s against the 5s trigger interval on this Windows/Docker
+   Desktop/WSL2 setup, even with (1) fixed and zero concurrent jobs running.
+
+Neither is a bug in this change's code — the API and UI behave exactly per spec in both
+cases (503/pending/timeout-hint all fire correctly). It is a characteristic of a
+long-running Structured Streaming file-sink demo environment on Windows.
+Recommendation for demo day (added to docs/TESTING_GUIDE.md): shortly before presenting,
+`docker compose restart spark` and relaunch `streaming.pipeline` fresh so `raw_events` file
+count / any lingering diagnostic processes don't carry over from rehearsal, and avoid
+running extra `docker compose exec spark ...` one-off commands while the live demo is in
+progress.
+
+## Cleanup after this test
+configs/serving.yaml api.demo_enabled reverted to `false` (spec default) and `api`
+container restarted to pick it up. GET /demo and GET /debug/users/1 reconfirmed 404.
+
+## CORRECTION (2026-10-01) — cause of the slow batches
+Point 2 above blames "raw_events accumulates small files; listing slows down as N grows". Later
+measurements do not support it (31 files, 260 KB, listing 2-4 s; latency better than on 29/09 with
+fewer files). Point 1 (runaway loop, 328 zombies, concurrent Spark jobs) stands. The real structure
+of the delay (two chained queries x ~10 s batches) and the fix for the other problem found here
+(streaming not restarting by itself) are in evidence/p2_streaming_latency.txt.
