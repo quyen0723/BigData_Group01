@@ -1,0 +1,15 @@
+# Person 2 environment — serving/streaming/API side (separate from Person 1's configs/requirements.txt,
+# which pins the ETL/modeling env). Pin versions when the first successful Docker build completes;
+# recorded in evidence/p2_env_versions.txt.
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+pymongo==4.18.2
+pydantic==2.13.5
+pyyaml==6.0.3
+pytest==9.1.1
+httpx==0.28.1
+confluent-kafka==2.6.1
+numpy==2.3.4
+# pyspark 3.5.x's pyspark.ml still imports distutils (removed from stdlib in
+# Python 3.12); setuptools>=60 vendors a compatible shim that restores it.
+setuptools>=80
