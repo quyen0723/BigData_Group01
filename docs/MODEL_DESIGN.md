@@ -9,7 +9,7 @@
 
 | Nguồn | Thuật toán | Training | Artifact |
 |---|---|---|---|
-| Popular movies | Thống kê (support ≥ 100, xếp avg_rating, tie-break support→movieId) | Batch (nb01) | `popular_movies.json` |
+| Popular movies | Thống kê (support ≥ 100, xếp **weighted rating**, tie-break support→movieId) | Batch (nb01) | `popular_movies.json` |
 | Similar movies | Content-based: genres multi-hot + cosine | Batch (nb02) | `similar_movies.json` |
 | ALS Top-N | Collaborative filtering: ALS matrix factorization | Batch (nb03) | `als_topn.json` → collection `user_recommendations` |
 | User history | Không có model — aggregate từ raw ratings seed | Import time (Person 2) | `user_history_seed.parquet` → docs §3.4 |
@@ -25,7 +25,8 @@
 ## 3. Baselines
 
 - **MovieMean** (global fallback mean = 3.5287): RMSE val **1.0092**, test **0.9939** — trong band sanity [0.6, 1.1]. ALS buộc phải thắng baseline này (gate trong notebook).
-- **Popularity Top-N** (min_support=100): chọn ms=100 vì ms=50 cho cùng top-5 [159817, 318, 142115, 858, 50] trong khi ms=100 an toàn hơn cho long tail (EDA §5: 62.1% phim < 10 ratings); ms=500 cho top-5 khác [318, 858, 50, 527, 1221] — quá gắt. Deterministic check (chạy 2 lần cùng thứ tự) PASS.
+- **Popularity Top-N** (min_support=100, score = weighted rating): chọn ms=100 làm filter đủ tiêu chuẩn (CONTRACTS §3.1); thứ hạng xếp theo **IMDb-style weighted rating (Bayesian estimate, credibility formula)**:
+  `WR = v/(v+m)·R + m/(v+m)·C` — R=avg_rating phim, v=support, C=3.5287 (global mean TRAIN-only), **m=1000** ("equivalent prior sample size", chọn theo số đã verify trong HANDOFF_PERSON1_demo_changes.md: Shawshank v=73,945 lên hạng 1, phim tài liệu v<200 tụt khỏi top). Căn cứ lý thuyết: IMDb Ratings FAQ (true Bayesian estimate) + Murphy PML-Advanced §3.6.2 Eq 3.256/3.257 (posterior mean shrinkage — "more shrinkage for smaller sample size"). Top-5 mới: [318, 858, 50, 527, 1221] (Shawshank #1, WR 4.416). Deterministic check (chạy 2 lần cùng thứ tự, tie-break WR desc→support desc→movieId asc) PASS.
 
 ## 4. Content-based (similar movies)
 

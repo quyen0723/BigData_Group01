@@ -26,6 +26,16 @@ ARTIFACTS.mkdir(exist_ok=True)
 
 MIN_SUPPORT_GRID = [50, 100, 500]
 MS_FINAL = 100          # default; justification from metrics comparison (INV6)
+# m for IMDb-style weighted rating WR = v/(v+m)*R + m/(v+m)*C — a "true Bayesian
+# estimate" (IMDb Ratings FAQ; actuarial credibility formula), equivalent to the
+# posterior mean of a normal-normal hierarchical model with shrinkage w = v/(v+m)
+# (Murphy, Probabilistic ML: Advanced Topics, Section 3.6.2, Eq 3.256/3.257:
+# "more shrinkage for smaller sample size"). m = 1000 chosen per handoff evidence
+# (docs/HANDOFF_PERSON1_demo_changes.md): with m=1000, Shawshank (v=73,945)
+# outranks low-support high-average documentaries (v<200). m = equivalent prior
+# sample size; MS_FINAL=100 stays as the min-support ELIGIBILITY filter (CONTRACTS
+# Section 3.1), a separate role from m.
+MS_WR = 1000
 RMSE_BAND = (0.6, 1.1)  # PLAN research: ALS well-tuned 0.7-0.9; baselines ~0.9-1.05
 
 def main():
@@ -77,23 +87,30 @@ def main():
         f"KILL-METRIC: MovieMean RMSE {rmse_mm_test:.4f} outside band {RMSE_BAND}"
 
     # ---------- B3.2b Popularity Top-N ----------
+    # C ("C") = global train mean rating (computed above on the TRAIN split only —
+    # never val/test, KILL-LEAKAGE); m = MS_WR = equivalent prior sample size.
     pop_stats = (train.groupBy("movieId")
-                 .agg(F.count("*").alias("support"), F.avg("rating").alias("avg_rating")))
+                 .agg(F.count("*").alias("support"), F.avg("rating").alias("avg_rating"))
+                 .withColumn(
+                     "wr",
+                     (F.col("support") * F.col("avg_rating") + F.lit(MS_WR) * F.lit(global_mean))
+                     / (F.col("support") + F.lit(MS_WR)),
+                 ))
     movies_meta = spark.read.parquet(str(CURATED / "curated_movies")).select(
         "movieId", "title", "genres")
     results = {}
     for ms in MIN_SUPPORT_GRID:
         top = (pop_stats.filter(F.col("support") >= ms).join(movies_meta, "movieId")
-               .orderBy(F.desc("avg_rating"), F.desc("support"), F.asc("movieId")).limit(10))
+               .orderBy(F.desc("wr"), F.desc("support"), F.asc("movieId")).limit(10))
         results[ms] = [r["movieId"] for r in top.collect()]
     t2 = (pop_stats.filter(F.col("support") >= 100).join(movies_meta, "movieId")
-          .orderBy(F.desc("avg_rating"), F.desc("support"), F.asc("movieId")).limit(10))
+          .orderBy(F.desc("wr"), F.desc("support"), F.asc("movieId")).limit(10))
     deterministic = [r["movieId"] for r in t2.collect()] == results[100]
     assert deterministic, "KILL: popularity not deterministic (tie-break failed)"
 
-    # ---------- artifact per CONTRACTS 3.1 ----------
+    # ---------- artifact per CONTRACTS 3.1 (score = weighted rating) ----------
     pop_rows = (pop_stats.filter(F.col("support") >= MS_FINAL).join(movies_meta, "movieId")
-               .withColumn("score", F.col("avg_rating"))
+               .withColumn("score", F.col("wr"))
                .orderBy(F.desc("score"), F.desc("support"), F.asc("movieId"))
                .limit(10).collect())
     doc = {"scope": "global", "modelVersion": "v1.0.0",
@@ -117,6 +134,8 @@ def main():
         out.write(f"MovieMean global fallback mean={global_mean:.4f}\n")
         out.write(f"MovieMean RMSE val={rmse_mm_val:.4f} test={rmse_mm_test:.4f} band={RMSE_BAND} -> PASS\n")
         out.write(f"Popularity deterministic (ms=100): {deterministic} -> PASS\n")
+        out.write(f"Popularity score: weighted rating WR = v/(v+m)*R + m/(v+m)*C, m={MS_WR}, "
+                  f"C={global_mean:.4f} (train global mean; IMDb Bayesian estimate / Murphy Eq 3.256-3.257)\n")
         out.write(f"Popularity top5 per min_support: {[(ms, ids[:5]) for ms, ids in results.items()]}\n")
         out.write("popular_movies.json written (contract 3.1)\n")
         out.write("VERIFY: PASS\n")
