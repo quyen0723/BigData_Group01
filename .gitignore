@@ -1,5 +1,6 @@
 # .gitignore — MovieLens Hybrid Rec
 .venv/
+.venv-serving/
 data/raw/
 data/curated/
 data/curated.zip
@@ -11,8 +12,18 @@ __pycache__/
 logs/
 *.bak
 .DS_Store
+.pytest_cache/
 # Colab checkpoints on Drive (never in repo)
 checkpoints/data/mr_input/
 
 # Downloaded Drive bundle (1GB: curated, models, seed parquet — big artifacts stay local/Drive)
 movielens32m/
+
+# Person 2 local secrets
+.env
+
+# Raw Drive download of the bundle (1.3 GB; the extracted movielens32m/ is ignored above)
+movielens32m-*.zip
+
+# oh-my-claudecode runtime state / session logs (local only)
+.omc/

@@ -1,0 +1,64 @@
+# Streaming configuration — Person 2 (Kafka + Structured Streaming), WBS 5.1/5.2
+# Paths are relative to the mounted data bundle root (see `data_root`); never hardcoded in source.
+
+kafka:
+  bootstrap_servers_env: "KAFKA_BOOTSTRAP_SERVERS"
+  topic: "ratings.v1"
+  partitions: 3
+  replication_factor: 1
+  # NOTE (verified 2026-09-26): the host-mapped PLAINTEXT_HOST listener
+  # (localhost:9094, docker-compose.yml) is intermittently flaky under Docker
+  # Desktop/WSL2 on Windows — raw TCP connects instantly every time, but the
+  # Kafka wire-protocol handshake occasionally gets POLLHUP'd, especially soon
+  # after broker startup (transaction coordinator warm-up) or under several
+  # quick reconnects. This is host-networking flakiness, not a Kafka/broker
+  # config bug. The pipeline (Spark job, producer simulator) MUST run inside
+  # the compose network against `kafka:9092` (the internal listener) — the
+  # host port is for manual debugging only, and callers there should retry.
+
+spark:
+  app_name: "movielens-streaming"
+  master: "local[*]"
+  driver_memory: "6g"
+  shuffle_partitions: 8
+  trigger_seconds: 5
+  max_offsets_per_trigger: 5000
+  packages:
+    - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7"
+    # 10.7.0 confirmed on mongodb.com/docs/spark-connector/v10.x: Spark 3.2-3.5, Mongo 4.2+
+    # (v11.x needs Spark 4.0+, which pyspark==3.5.7 does not satisfy — do not upgrade past 10.x).
+    - "org.mongodb.spark:mongo-spark-connector_2.12:10.7.0"
+
+paths:
+  data_root: "/data"                              # mount point inside containers (host: ./movielens32m)
+  curated_ratings: "/data/curated/curated_ratings" # Person 1 path (§2.1) — append target, never file-sink here
+  curated_movies: "/data/curated/curated_movies"
+  raw_events: "/data/stream/raw_events"
+  quarantine: "/data/stream/quarantine"
+  checkpoints:
+    raw: "/data/stream/checkpoints/raw"
+    valid: "/data/stream/checkpoints/valid"
+    invalid: "/data/stream/checkpoints/invalid"
+  handoff: "/data/stream/handoff"
+  candidates: "/data/candidates"
+  artifacts: "/data/artifacts"
+  models: "/data/models"
+
+validation:
+  watermark: "10 minutes"
+  max_future_skew_days: 1              # timestamp must not be more than N days in the future
+  valid_ratings: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+
+user_history_update:
+  recent_cap: 50    # keep in sync with configs/serving.yaml routing.recent_cap
+  positive_cap: 50  # keep in sync with configs/serving.yaml routing.positive_cap
+  positive_threshold: 4.0
+
+retrain_trigger:
+  n_min_events: 50     # demo-scale threshold; production value TBD with Person 1
+  interval_minutes: null  # null = trigger only by count or --force, not by schedule
+
+promotion_gate:
+  epsilon_rmse: 0.01               # G1: candidate RMSE <= active RMSE * (1 + epsilon)  — default, confirm with Person 1 (D3)
+  rmse_sanity_band: [0.6, 1.1]     # G3 — same band Person 1 used (MODEL_DESIGN.md)
+  retention_keep_versions: 2       # cleanup keeps active + previous by default

@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MovieLens — Quản trị</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --text: #e6e8ee; --muted: #8a90a0; --accent: #4f8cff; --warn: #e0a030; --bad: #e05353; --good: #3fb87f;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; font-size: 14px;
+  }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .badge {
+    font-size: 11px; color: var(--warn); border: 1px solid var(--warn);
+    padding: 2px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  input[type=number], input[type=text], select {
+    padding: 6px 8px; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+  }
+  input[type=number] { width: 110px; }
+  select { max-width: 340px; }
+  button {
+    padding: 6px 12px; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  /* #2563EB with white text is 5.17:1; the old #4f8cff was 3.22:1 (UI/UX review). */
+  button.primary { background: #2563EB; border-color: #2563EB; color: #fff; }
+  :focus-visible { outline: 2px solid #facc15; outline-offset: 2px; }
+  header a.role-link { color: var(--text); font-size: 13px; }
+  .field-label { color: var(--muted); font-size: 12px; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  main { display: flex; gap: 0; align-items: flex-start; min-height: calc(100vh - 58px); }
+  .left { flex: 1 1 60%; padding: 16px; min-width: 0; }
+  .right {
+    flex: 0 0 360px; padding: 16px; border-left: 1px solid var(--border);
+    background: var(--panel); min-height: calc(100vh - 58px);
+  }
+  h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 10px; }
+  .box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
+
+  .casecard h3 { margin: 0 0 8px; font-size: 15px; }
+  .casecard table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .casecard td { padding: 4px 8px 4px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+  .casecard td.k { color: var(--muted); width: 150px; white-space: nowrap; }
+  .casecard .observed { margin-top: 10px; padding: 8px 10px; background: var(--panel2); border-radius: 6px; font-family: Consolas, monospace; font-size: 12px; }
+  .casecard .how { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .casecard .how li { margin: 2px 0; }
+  .casecard .decision { margin-top: 8px; font-size: 12px; color: var(--warn); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .card {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    border-left: 4px solid var(--card-color, var(--accent)); transition: opacity .2s; position: relative;
+  }
+  .card.busy { opacity: .5; pointer-events: none; }
+  .card.isnew { border-color: var(--good); border-left-color: var(--good); }
+  .card .pill {
+    position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+    background: var(--good); color: #06150d; padding: 2px 6px; border-radius: 999px;
+  }
+  .card .rank { font-size: 11px; color: var(--muted); }
+  .card .title { font-weight: 600; margin: 2px 0 4px; line-height: 1.3; }
+  .card .genres { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .card .source { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+  .stars { display: flex; gap: 2px; }
+  .stars button {
+    min-width: 40px; min-height: 40px; padding: 0; font-size: 22px; line-height: 1; background: transparent; border: none;
+    color: var(--muted); cursor: pointer;
+  }
+  .stars button:hover { color: var(--warn); }
+  .empty { color: var(--muted); padding: 20px 0; }
+
+  .kv { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { text-align: right; word-break: break-word; }
+  .kv.warn .v { color: var(--warn); font-weight: 600; }
+  .kv.flash .v { animation: flash 1.2s ease; }
+  @keyframes flash { 0% { color: var(--good); } 100% { color: var(--text); } }
+  #panel { margin-bottom: 18px; }
+  #log {
+    list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto;
+    font-family: Consolas, "SF Mono", monospace; font-size: 12px;
+  }
+  #log li { padding: 4px 0; border-bottom: 1px solid var(--border); color: var(--muted); }
+  #log li.ok { color: var(--good); }
+  #log li.err { color: var(--bad); }
+  #log li .t { color: var(--muted); margin-right: 6px; }
+  .offline-note { font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+  .genres-pick { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0; font-size: 12px; }
+  .genres-pick label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row input[type=text] { flex: 1 1 220px; }
+  .movielist { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
+  .movielist li { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .movielist .meta { color: var(--muted); font-size: 11px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+
+  table.versions { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.versions th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }
+  table.versions td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .chip.active { background: rgba(63,184,127,.18); color: var(--good); }
+  .chip.rejected { background: rgba(224,83,83,.18); color: var(--bad); }
+  .chip.other { background: rgba(138,144,160,.18); color: var(--muted); }
+  .gate { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .gate .fail { color: var(--bad); }
+  .bar { height: 10px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin: 8px 0 4px; border: 1px solid var(--border); }
+  .bar > div { height: 100%; background: var(--accent); }
+
+  /* Narrow windows: the side panel stacks under the main column instead of squeezing it to nothing. */
+  @media (max-width: 900px) {
+    main { flex-direction: column; align-items: stretch; min-height: 0; }
+    .left { flex: 1 1 auto; width: 100%; }
+    .right { flex: 1 1 auto; width: 100%; min-height: 0; border-left: 0; border-top: 1px solid var(--border); }
+    .controls { margin-left: 0; width: 100%; }
+    select { max-width: 100%; }
+    .casecard td.k { width: auto; white-space: normal; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>MovieLens — Quản trị</h1>
+  <span class="badge">Demo web client — demo-only</span>
+  <a class="role-link" href="/app">Mở trang người dùng →</a>
+  <div class="controls">
+    <label for="caseSelect" class="field-label">Case test</label>
+    <select id="caseSelect"></select>
+    <label for="userIdInput" class="field-label">userId</label>
+    <input type="number" id="userIdInput" min="1">
+    <button id="loadBtn" class="primary">Tải gợi ý</button>
+  </div>
+</header>
+<main>
+  <div class="left">
+    <section id="caseCard" class="box casecard"></section>
+
+    <section id="moviesPanel" class="box" hidden>
+      <h2>Phim mới (demo-only)</h2>
+      <label for="movieTitle" class="field-label">Tên phim</label>
+      <div class="row">
+        <input type="text" id="movieTitle" maxlength="200" placeholder="Ví dụ: Demo Crime Story">
+        <button id="addMovieBtn" class="primary">Thêm phim</button>
+      </div>
+      <div class="genres-pick" id="genrePick"></div>
+      <p class="hint">Phim chỉ nằm trong MongoDB, nhận movieId từ 9,000,000. Gợi ý xuất hiện ở hạng 3 cho user có thể loại hợp (tier few/enough).</p>
+      <ul class="movielist" id="movieList"></ul>
+    </section>
+
+    <section id="systemPanel" class="box" hidden>
+      <h2>Vòng đời model (chỉ xem)</h2>
+      <table class="versions"><thead><tr><th>Version</th><th>Trạng thái</th><th>Nạp lúc</th><th>Cổng kiểm (gate)</th></tr></thead><tbody id="versionRows"></tbody></table>
+      <h2 style="margin-top:16px">Tiến độ retrain</h2>
+      <div class="bar"><div id="progressBar" style="width:0%"></div></div>
+      <div id="progressText" class="hint"></div>
+      <p class="hint">Lịch chốt: 1 tuần/lần — chưa có scheduler chạy thật, hiện trigger theo số event hoặc <code>--force</code>. Việc train chạy trên Colab (Person 1); trang này không có nút kích hoạt.</p>
+    </section>
+
+    <h2 id="recTitle">Gợi ý phim</h2>
+    <div id="cards" class="grid"><p class="empty">Chọn một case test để bắt đầu.</p></div>
+  </div>
+  <div class="right">
+    <div id="panel">
+      <h2>Bên trong hệ thống</h2>
+      <div class="kv"><span class="k">user đang xem</span><span class="v" id="f-user">—</span></div>
+      <div class="kv"><span class="k">tier</span><span class="v" id="f-tier">—</span></div>
+      <div class="kv"><span class="k">strategy</span><span class="v" id="f-strategy">—</span></div>
+      <div class="kv warn" id="row-fallback" style="display:none"><span class="k">fallbackReason</span><span class="v" id="f-fallback">—</span></div>
+      <div class="kv"><span class="k">modelVersion</span><span class="v" id="f-model">—</span></div>
+      <div class="kv"><span class="k">latency</span><span class="v" id="f-latency">—</span></div>
+      <div class="kv"><span class="k">interaction_count</span><span class="v" id="f-interactions">—</span></div>
+      <div class="kv"><span class="k">last batch (streaming)</span><span class="v" id="f-batch">—</span></div>
+    </div>
+    <h2>Nhật ký sự kiện</h2>
+    <ul id="log" role="log" aria-live="polite" aria-label="Nhật ký sự kiện"></ul>
+    <p class="offline-note">Trang này không tải bất kỳ tài nguyên nào từ internet — chỉ gọi API cùng origin.</p>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+
+  var SEED_USER = 700008;
+  var GENRES = ["Action","Adventure","Animation","Children","Comedy","Crime","Documentary","Drama","Fantasy",
+                "Film-Noir","Horror","IMAX","Musical","Mystery","Romance","Sci-Fi","Thriller","War","Western"];
+
+  // Nội dung chép từ bảng use case nhóm chốt (Google Doc "Notes - BDA501", tab 5).
+  // user: "fresh" = user ngẫu nhiên chưa có lịch sử | "seed" = user seed sẵn | số = userId cố định | null = không cần user
+  var CASES = [
+    { id: "free", label: "— Nhập userId tự do —", kind: "user", user: null,
+      title: "Tự chọn userId",
+      what: "Nhập bất kỳ userId nào ở ô bên cạnh rồi bấm Tải gợi ý.",
+      rec: "Tuỳ lịch sử của user đó.", streaming: "—", retrain: "—", chot: "—", how: [] },
+
+    { id: "c1", label: "1. User có tài khoản, chưa rating", kind: "user", user: "fresh",
+      title: "Case 1 — User có tài khoản, chưa rating",
+      what: "interaction_count = 0", rec: "Popularity Top-N", streaming: "Không", retrain: "Không",
+      chot: "weighted rating (Bayesian/IMDb-style)",
+      decision: "Hiện dùng điểm trung bình thô + min_support=100. Công thức weighted rating giao Quyên (Person 1) nghiên cứu và xuất lại popular_movies.json.",
+      how: ["Mỗi lần chọn case này, trang sinh một userId mới chưa có lịch sử.", "Quan sát tier 0_history / POPULARITY."] },
+
+    { id: "c2", label: "2. User có rating mới", kind: "user", user: "seed",
+      title: "Case 2 — User có rating mới",
+      what: "Rating mới được validate và cập nhật User History", rec: "Content / Hybrid có thể dùng history mới",
+      streaming: "Có", retrain: "Không ngay", chot: "retrain lịch cố định", how: [
+        "Bấm ⭐ trên một phim bất kỳ.", "Nhật ký ghi 202 (đã vào Kafka), rồi chuyển sang applied khi streaming xử lý xong.",
+        "Phim vừa rate biến mất khỏi gợi ý, interaction_count tăng."] },
+
+    { id: "c3", label: "3. Phim mới, chưa có rating", kind: "event", user: "seed", movies: true,
+      title: "Case 3 — Phim mới, chưa có rating",
+      what: "Có movieId, title, genres nhưng chưa có interaction", rec: "Content-Based (đánh dấu phim user đã rating)",
+      streaming: "Không nhất thiết", retrain: "Không", chot: "giả lập thêm phim mới vào hệ thống",
+      decision: "similar_movies được tính sẵn nên phim mới không nằm trong danh sách của phim nào. Hệ thống ghép phim mới theo thể loại user hay xem và dành riêng một vị trí (hạng 3).",
+      how: ["Nhập tên, chọn thể loại (ví dụ Crime + Drama), bấm Thêm phim.", "Phim xuất hiện ở hạng 3 với nhãn MỚI cho user hợp thể loại.",
+            "Thử thêm một phim Western: không xuất hiện vì user không có thể loại đó."] },
+
+    { id: "c4", label: "4. Phim mới bắt đầu có rating", kind: "event", user: "seed", movies: true,
+      title: "Case 4 — Phim mới bắt đầu có rating",
+      what: "Xuất hiện userId – movieId – rating mới", rec: "Content / Hybrid trong thời gian đầu",
+      streaming: "Có", retrain: "Theo lịch", chot: "—",
+      how: ["Thêm một phim Crime/Drama như case 3.", "Bấm ⭐ trên phim có nhãn MỚI.",
+            "Rating đi qua Kafka → streaming (không bị quarantine), phim biến mất khỏi gợi ý của user này."] },
+
+    { id: "c5", label: "5. Retraining", kind: "system", user: null,
+      title: "Case 5 — Retraining",
+      what: "Rating mới đã tích luỹ trong Curated Data", rec: "ALS tạo model/recommendation mới",
+      streaming: "Không", retrain: "Có", chot: "1 tuần",
+      decision: "Trang chỉ hiển thị. Việc train chạy trên Colab của Person 1; hệ thống đóng gói và bàn giao khi đủ event.",
+      how: ["Xem thanh tiến độ: số event đã áp dụng kể từ lần bàn giao gần nhất so với ngưỡng.",
+            "Rate vài phim ở case 2 rồi quay lại: số event tăng."] },
+
+    { id: "c6", label: "6. Model mới được promote", kind: "system", user: null,
+      title: "Case 6 — Model mới được promote",
+      what: "Model vượt qua validation", rec: "Generate ALS Top-N → MongoDB", streaming: "Không", retrain: "Hoàn tất", chot: "—",
+      decision: "Chỉ chuyển version khi qua cổng kiểm G1–G7. Bất kỳ lỗi nào cũng bị coi là FAIL (fail-closed): version đang chạy không bị đổi.",
+      how: ["Xem bảng version: v1.0.0 đang active, v1.1.0 bị rejected kèm các cổng không đạt."] },
+
+    { id: "c7", label: "7. User mới tạo tài khoản", kind: "user", user: "fresh",
+      title: "Case 7 — User mới tạo tài khoản",
+      what: "User chưa có interaction history", rec: "Onboarding → Preference Profile → Popularity + Content/Hybrid",
+      streaming: "Không bắt buộc", retrain: "Không", chot: "Giống cái 1",
+      decision: "Nhóm chốt case 7 giống case 1. Các sao user bấm trên danh sách phổ biến đóng vai onboarding tối giản: hệ thống ghi nhận sở thích qua các rating đầu tiên.",
+      how: ["Như case 1. Bấm ⭐ vài phim phổ biến để xem hồ sơ sở thích hình thành (tier chuyển sang few_history)."] },
+
+    { id: "c8", label: "8. User mới bắt đầu rating", kind: "user", user: "seed",
+      title: "Case 8 — User mới bắt đầu rating",
+      what: "Có một vài interaction đầu tiên", rec: "Content / Hybrid, sau đó chuyển dần sang ALS",
+      streaming: "Có", retrain: "Không ngay", chot: "—",
+      decision: "Chuyển sang ALS chỉ xảy ra sau lần retrain kế tiếp, khi model có dữ liệu của user này.",
+      how: ["User " + SEED_USER + " được seed sẵn 3 rating (scripts/seed_demo_users.py).", "Quan sát tier few_history / CONTENT+POPULARITY."] },
+
+    { id: "c9", label: "9. User mới + phim mới", kind: "event", user: "fresh", movies: true,
+      title: "Case 9 — User mới + phim mới",
+      what: "Cả user và item đều thiếu interaction", rec: "Onboarding/Preference + Content/Popularity; có thể thêm LLM re-ranking ở tầng candidate",
+      streaming: "Không nhất thiết", retrain: "Không", chot: "Giống cái 3 + 7",
+      decision: "LLM re-ranking nằm ngoài phạm vi. Phim mới chỉ nối được với user mới sau khi user có ít nhất một tín hiệu sở thích.",
+      how: ["User mới chỉ thấy danh sách phổ biến (0_history), chưa có phim mới.", "Thêm một phim Crime/Drama.",
+            "Bấm ⭐ một phim phổ biến cùng thể loại (ví dụ Shawshank). Khi áp dụng xong, tier chuyển few_history và phim mới xuất hiện."] },
+
+    { id: "als", label: "Đã có rating và có ALS (user 1)", kind: "user", user: 1,
+      title: "User đã có rating và có ALS",
+      what: "user 1 có 146 rating và có document ALS", rec: "ALS + Content, loại phim đã rate", streaming: "Có", retrain: "Có", chot: "—",
+      how: ["Quan sát tier enough_history / ALS+CONTENT.", "Bấm ⭐ phim hạng 1: phim biến mất khỏi danh sách."] },
+
+    { id: "noals", label: "Đủ lịch sử nhưng thiếu ALS (user 127249)", kind: "user", user: 127249,
+      title: "User đủ lịch sử nhưng thiếu ALS",
+      what: "user 127249 có 69 rating nhưng model ALS không sinh gợi ý cho user này", rec: "Hạ cấp: Content + Popularity, ghi fallbackReason",
+      streaming: "Có", retrain: "Có", chot: "—",
+      decision: "46,340 user thuộc nhóm này. Hệ thống không báo lỗi mà tự hạ cấp và nói rõ lý do.",
+      how: ["Quan sát fallbackReason: als_artifact_missing tô màu cam."] }
+  ];
+
+  var GENRE_COLORS = {
+    Action: "#e05353", Adventure: "#e0a030", Animation: "#3fb87f", Children: "#4fd1c5",
+    Comedy: "#f2c94c", Crime: "#8a4fff", Documentary: "#6c757d", Drama: "#4f8cff",
+    Fantasy: "#c04fff", "Film-Noir": "#555", Horror: "#a30000", IMAX: "#00b0c0",
+    Musical: "#ff70a6", Mystery: "#7a5cff", Romance: "#ff6f91", "Sci-Fi": "#00c2ff",
+    Thriller: "#ff8c42", War: "#8c8c00", Western: "#c08040", "(no genres listed)": "#555"
+  };
+
+  var state = { userId: null, movieIds: [], tier: null, caseId: "free", pollSeconds: 60, rated: {} };
+
+  function $(id) { return document.getElementById(id); }
+  function colorForGenres(genres) { return GENRE_COLORS[(genres || "").split("|")[0]] || "#4f8cff"; }
+  function caseById(id) { return CASES.filter(function (c) { return c.id === id; })[0]; }
+
+  function nowLabel() {
+    var d = new Date();
+    return d.toLocaleTimeString("vi-VN", { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+  }
+  function log(msg, cls) {
+    var li = document.createElement("li");
+    if (cls) li.className = cls;
+    var t = document.createElement("span");
+    t.className = "t"; t.textContent = "[" + nowLabel() + "]";
+    li.appendChild(t);
+    li.appendChild(document.createTextNode(msg));
+    var ul = $("log");
+    ul.insertBefore(li, ul.firstChild);
+  }
+  function flash(el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+
+  function fetchJson(url, opts) {
+    return fetch(url, opts).then(function (resp) {
+      return resp.json().catch(function () { return {}; }).then(function (body) {
+        return { ok: resp.ok, status: resp.status, body: body };
+      });
+    });
+  }
+  function detailOf(res) {
+    var d = res.body && res.body.detail;
+    return typeof d === "string" ? d : (d ? JSON.stringify(d) : "");
+  }
+
+  // ---------- case card ----------
+  function renderCaseCard(c) {
+    var box = $("caseCard");
+    box.innerHTML = "";
+    var h = document.createElement("h3"); h.textContent = c.title; box.appendChild(h);
+
+    var table = document.createElement("table");
+    [["Điều gì xảy ra", c.what], ["Recommendation", c.rec], ["Streaming", c.streaming],
+     ["ALS Retrain", c.retrain], ["Chốt", c.chot]].forEach(function (row) {
+      var tr = document.createElement("tr");
+      var k = document.createElement("td"); k.className = "k"; k.textContent = row[0];
+      var v = document.createElement("td"); v.textContent = row[1];
+      tr.appendChild(k); tr.appendChild(v); table.appendChild(tr);
+    });
+    box.appendChild(table);
+
+    var obs = document.createElement("div");
+    obs.className = "observed"; obs.id = "observed";
+    obs.textContent = "Quan sát: —";
+    box.appendChild(obs);
+
+    if (c.decision) {
+      var d = document.createElement("div"); d.className = "decision"; d.textContent = c.decision; box.appendChild(d);
+    }
+    if (c.how && c.how.length) {
+      var ol = document.createElement("ol"); ol.className = "how";
+      c.how.forEach(function (step) { var li = document.createElement("li"); li.textContent = step; ol.appendChild(li); });
+      box.appendChild(ol);
+    }
+  }
+
+  function setObserved(rec, dbg) {
+    var el = $("observed");
+    if (!el) return;
+    el.textContent = "Quan sát: tier=" + rec.tier + " · strategy=" + rec.strategy +
+      (rec.fallbackReason ? " · fallbackReason=" + rec.fallbackReason : "") +
+      " · interaction_count=" + (dbg ? dbg.interaction_count : "?") + " · user " + rec.userId;
+  }
+
+  // ---------- recommendations ----------
+  function renderCards(recommendations) {
+    var container = $("cards");
+    container.innerHTML = "";
+    if (!recommendations.length) {
+      container.innerHTML = '<p class="empty">Không có gợi ý nào.</p>';
+      return;
+    }
+    recommendations.forEach(function (item) {
+      var isNew = item.source.split("+").indexOf("new") !== -1;
+      var card = document.createElement("div");
+      card.className = "card" + (isNew ? " isnew" : "");
+      card.style.setProperty("--card-color", colorForGenres(item.genres));
+
+      if (isNew) { var pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "MỚI"; card.appendChild(pill); }
+
+      var rank = document.createElement("div");
+      rank.className = "rank"; rank.textContent = "#" + item.rank + " · score " + item.score.toFixed(4);
+      card.appendChild(rank);
+
+      var title = document.createElement("div");
+      title.className = "title"; title.textContent = item.title;
+      card.appendChild(title);
+
+      var genres = document.createElement("div");
+      genres.className = "genres"; genres.textContent = item.genres;
+      card.appendChild(genres);
+
+      var source = document.createElement("div");
+      source.className = "source"; source.textContent = "nguồn: " + item.source;
+      card.appendChild(source);
+
+      var stars = document.createElement("div");
+      stars.className = "stars";
+      for (var s = 1; s <= 5; s++) {
+        (function (value) {
+          var b = document.createElement("button");
+          b.textContent = "☆"; b.title = value + " sao";
+          b.setAttribute("aria-label", "Chấm " + value + " sao cho " + item.title);
+          b.addEventListener("click", function () { rateMovie(item.movieId, value, card); });
+          stars.appendChild(b);
+        })(s);
+      }
+      card.appendChild(stars);
+      container.appendChild(card);
+    });
+  }
+
+  function setPanel(rec, latencyMs) {
+    $("f-user").textContent = rec.userId;
+    $("f-tier").textContent = rec.tier;
+    $("f-strategy").textContent = rec.strategy;
+    var fbRow = $("row-fallback");
+    if (rec.fallbackReason) { $("f-fallback").textContent = rec.fallbackReason; fbRow.style.display = "flex"; }
+    else { $("f-fallback").textContent = "—"; fbRow.style.display = "none"; }
+    $("f-model").textContent = rec.modelVersion;
+    $("f-latency").textContent = latencyMs.toFixed(0) + " ms";
+  }
+
+  function setDebug(dbg) {
+    $("f-interactions").textContent = dbg.interaction_count;
+    $("f-batch").textContent = dbg.pipeline.lastBatchId != null
+      ? "#" + dbg.pipeline.lastBatchId + " @ " + (dbg.pipeline.lastRunAt || "?")
+      : "(streaming chưa chạy batch nào)";
+  }
+
+  function blankPanel() {
+    ["f-user", "f-tier", "f-strategy", "f-model", "f-latency", "f-interactions", "f-batch"].forEach(function (id) { $(id).textContent = "—"; });
+    $("row-fallback").style.display = "none";
+  }
+
+  function loadUser(userId, opts) {
+    opts = opts || {};
+    state.userId = userId;
+    $("userIdInput").value = userId;
+    var t0 = performance.now();
+    return fetchJson("/recommendations/" + userId).then(function (res) {
+      var latency = performance.now() - t0;
+      if (!res.ok) { log("✗ GET /recommendations/" + userId + " -> " + res.status, "err"); return null; }
+      var rec = res.body;
+      var prevTier = state.tier, prevMovieIds = state.movieIds;
+      var newMovieIds = rec.recommendations.map(function (r) { return r.movieId; });
+
+      renderCards(rec.recommendations);
+      setPanel(rec, latency);
+
+      if (opts.diff && prevTier !== null && prevTier !== rec.tier) {
+        flash($("f-tier"));
+        log("tier đổi: " + prevTier + " → " + rec.tier, "ok");
+      }
+      if (opts.diff) {
+        var pushedOut = 0;
+        prevMovieIds.forEach(function (mid) {
+          if (newMovieIds.indexOf(mid) !== -1) return;
+          if (state.rated[mid]) log("phim movieId=" + mid + " không còn trong danh sách gợi ý (vừa được rate nên bị loại)", "ok");
+          else pushedOut++;
+        });
+        if (pushedOut) log(pushedOut + " phim khác không còn trong top-k (bị đẩy ra do thứ hạng thay đổi)", "ok");
+        rec.recommendations.forEach(function (r) {
+          if (r.source.split("+").indexOf("new") !== -1 && prevMovieIds.indexOf(r.movieId) === -1) {
+            log("phim MỚI movieId=" + r.movieId + " (" + r.title + ") xuất hiện ở hạng " + r.rank, "ok");
+          }
+        });
+      }
+      state.tier = rec.tier;
+      state.movieIds = newMovieIds;
+
+      return fetchJson("/debug/users/" + userId).then(function (dres) {
+        if (dres.ok) {
+          setDebug(dres.body);
+          setObserved(rec, dres.body);
+          var c = caseById(state.caseId);
+          if (c && c.user === "seed" && dres.body.interaction_count === 0) {
+            log("user " + SEED_USER + " chưa có rating — chạy: python scripts/seed_demo_users.py", "err");
+          }
+        }
+        return rec;
+      });
+    });
+  }
+
+  // ---------- user choice per case ----------
+  function pickFreshUser(triesLeft) {
+    var id = 500000 + Math.floor(Math.random() * 99999);
+    return fetchJson("/debug/users/" + id).then(function (res) {
+      if (res.ok && res.body.interaction_count > 0 && triesLeft > 1) return pickFreshUser(triesLeft - 1);
+      return id;
+    });
+  }
+
+  function resolveUser(rule) {
+    if (rule === "fresh") return pickFreshUser(5);
+    if (rule === "seed") return Promise.resolve(SEED_USER);
+    return Promise.resolve(rule);
+  }
+
+  // ---------- rating loop ----------
+  function rateMovie(movieId, ratingValue, cardEl) {
+    var eventId = crypto.randomUUID();
+    state.rated[movieId] = true;
+    cardEl.classList.add("busy");
+    log("★ rate userId=" + state.userId + " movieId=" + movieId + " rating=" + ratingValue + ".0 (eventId=" + eventId + ")");
+    fetchJson("/ratings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: state.userId, movieId: movieId, rating: ratingValue, eventId: eventId })
+    }).then(function (res) {
+      if (res.status !== 202) {
+        log("✗ POST /ratings -> " + res.status + " " + detailOf(res), "err");
+        cardEl.classList.remove("busy");
+        return;
+      }
+      log("→ Kafka ✓ (202, eventId=" + eventId + ")", "ok");
+      pollStatus(eventId, cardEl, 0);
+    });
+  }
+
+  function pollStatus(eventId, cardEl, attempt) {
+    if (attempt >= state.pollSeconds) {
+      log("⏱ hết " + state.pollSeconds + "s vẫn pending (eventId=" + eventId + ") — Streaming pipeline có đang chạy không?", "err");
+      cardEl.classList.remove("busy");
+      return;
+    }
+    fetchJson("/ratings/" + eventId).then(function (res) {
+      if (res.ok && res.body.status === "applied") {
+        log("✓ applied (eventId=" + eventId + ", batchId=" + res.body.batchId + ")", "ok");
+        cardEl.classList.remove("busy");
+        loadUser(state.userId, { diff: true }).then(refreshSystem);
+        return;
+      }
+      setTimeout(function () { pollStatus(eventId, cardEl, attempt + 1); }, 1000);
+    });
+  }
+
+  // ---------- system panel + demo movies ----------
+  function refreshSystem() {
+    return fetchJson("/debug/system").then(function (res) {
+      if (!res.ok) { log("✗ GET /debug/system -> " + res.status, "err"); return null; }
+      var s = res.body;
+      if (s.demo && s.demo.ratingPollTimeoutSeconds) state.pollSeconds = s.demo.ratingPollTimeoutSeconds;
+      renderVersions(s);
+      renderMovieList(s.demoMovies || []);
+      return s;
+    });
+  }
+
+  function renderVersions(s) {
+    var tbody = $("versionRows");
+    tbody.innerHTML = "";
+    s.versions.forEach(function (v) {
+      var tr = document.createElement("tr");
+      var tdV = document.createElement("td"); tdV.textContent = v.version; tr.appendChild(tdV);
+
+      var tdS = document.createElement("td");
+      var chip = document.createElement("span");
+      chip.className = "chip " + (v.status === "active" ? "active" : v.status === "rejected" ? "rejected" : "other");
+      chip.textContent = v.status; tdS.appendChild(chip); tr.appendChild(tdS);
+
+      var tdT = document.createElement("td"); tdT.textContent = (v.importedAt || "—").replace("T", " ").slice(0, 19); tr.appendChild(tdT);
+
+      var tdG = document.createElement("td");
+      var failed = v.gateChecks.filter(function (c) { return !c.passed; });
+      var summary = document.createElement("div");
+      summary.textContent = v.gateChecks.length ? (v.gateChecks.length - failed.length) + "/" + v.gateChecks.length + " đạt" : "—";
+      tdG.appendChild(summary);
+      failed.forEach(function (c) {
+        var line = document.createElement("div"); line.className = "gate";
+        var x = document.createElement("span"); x.className = "fail"; x.textContent = "✗ " + c.name;
+        line.appendChild(x); line.appendChild(document.createTextNode(" — " + c.detail));
+        tdG.appendChild(line);
+      });
+      tr.appendChild(tdG);
+      tbody.appendChild(tr);
+    });
+
+    var p = s.retrainProgress;
+    var pct = p.nMin > 0 ? Math.min(100, Math.round(p.pending / p.nMin * 100)) : 0;
+    $("progressBar").style.width = pct + "%";
+    $("progressText").textContent = p.pending + " / " + p.nMin + " event đã áp dụng kể từ lần bàn giao gần nhất" +
+      (p.watermark ? " (" + p.watermark.replace("T", " ").slice(0, 19) + ")" : " (chưa có lần bàn giao nào)") +
+      (p.pending >= p.nMin ? " — đủ ngưỡng, trigger sẽ tạo gói bàn giao" : "");
+  }
+
+  function renderMovieList(movies) {
+    var ul = $("movieList");
+    ul.innerHTML = "";
+    if (!movies.length) {
+      var li = document.createElement("li"); li.className = "meta"; li.textContent = "Chưa có phim demo nào."; ul.appendChild(li);
+      return;
+    }
+    movies.forEach(function (m) {
+      var li = document.createElement("li");
+      var left = document.createElement("div");
+      left.appendChild(document.createTextNode(m.title));
+      var meta = document.createElement("div"); meta.className = "meta";
+      meta.textContent = "movieId " + m.movieId + " · " + m.genres.join(" | ");
+      left.appendChild(meta);
+      var del = document.createElement("button"); del.className = "danger"; del.textContent = "Xoá";
+      del.addEventListener("click", function () { deleteMovie(m.movieId); });
+      li.appendChild(left); li.appendChild(del); ul.appendChild(li);
+    });
+  }
+
+  function reloadAfterMovieChange() {
+    return refreshSystem().then(function () {
+      var c = caseById(state.caseId);
+      if (c && c.kind !== "system" && state.userId) return loadUser(state.userId, { diff: true });
+    });
+  }
+
+  function addMovie() {
+    var title = $("movieTitle").value.trim();
+    var genres = [];
+    GENRES.forEach(function (g) { if ($("g-" + g).checked) genres.push(g); });
+    if (!title || !genres.length) { log("✗ cần có tên phim và ít nhất một thể loại", "err"); return; }
+    fetchJson("/movies", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title, genres: genres })
+    }).then(function (res) {
+      if (res.status !== 201) { log("✗ POST /movies -> " + res.status + " " + detailOf(res), "err"); return; }
+      log("+ phim demo movieId=" + res.body.movieId + " \"" + res.body.title + "\" (" + res.body.genres.join("|") + ")", "ok");
+      $("movieTitle").value = "";
+      reloadAfterMovieChange();
+    });
+  }
+
+  function deleteMovie(movieId) {
+    fetch("/movies/" + movieId, { method: "DELETE" }).then(function (resp) {
+      if (resp.status !== 204) { log("✗ DELETE /movies/" + movieId + " -> " + resp.status, "err"); return; }
+      log("− đã xoá phim demo movieId=" + movieId + " (rating đã có vẫn được giữ)", "ok");
+      reloadAfterMovieChange();
+    });
+  }
+
+  // ---------- case selection ----------
+  function selectCase(id) {
+    var c = caseById(id);
+    state.caseId = id; state.tier = null; state.movieIds = []; state.rated = {};
+    renderCaseCard(c);
+    $("moviesPanel").hidden = !c.movies;
+    $("systemPanel").hidden = c.kind !== "system";
+    $("cards").hidden = c.kind === "system";
+    $("recTitle").hidden = c.kind === "system";
+    if (id !== "free") log("case: " + c.label);
+
+    if (c.kind === "system") {
+      blankPanel(); state.userId = null;
+      return refreshSystem();
+    }
+    var chain = c.movies ? refreshSystem() : Promise.resolve();
+    if (c.user === null) { $("cards").innerHTML = '<p class="empty">Nhập userId rồi bấm Tải gợi ý.</p>'; return chain; }
+    return chain.then(function () { return resolveUser(c.user); }).then(function (uid) { return loadUser(uid); });
+  }
+
+  // ---------- init ----------
+  function init() {
+    var sel = $("caseSelect");
+    CASES.forEach(function (c) {
+      var o = document.createElement("option"); o.value = c.id; o.textContent = c.label; sel.appendChild(o);
+    });
+    var pick = $("genrePick");
+    GENRES.forEach(function (g) {
+      var label = document.createElement("label");
+      var cb = document.createElement("input"); cb.type = "checkbox"; cb.id = "g-" + g;
+      label.appendChild(cb); label.appendChild(document.createTextNode(g)); pick.appendChild(label);
+    });
+
+    sel.addEventListener("change", function () { selectCase(sel.value); });
+    $("loadBtn").addEventListener("click", function () {
+      var v = parseInt($("userIdInput").value, 10);
+      if (v > 0) { state.tier = null; state.movieIds = []; $("cards").hidden = false; $("recTitle").hidden = false; loadUser(v); }
+    });
+    $("addMovieBtn").addEventListener("click", addMovie);
+
+    renderCaseCard(caseById("free"));
+    log("Trang demo sẵn sàng. Chọn một case test hoặc nhập userId.");
+    refreshSystem();   // lấy thời gian chờ poll từ API (mặc định 60s nếu không gọi được)
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

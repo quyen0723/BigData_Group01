@@ -1,0 +1,49 @@
+# Streaming latency and the `streaming` service — measurements, 2026-10-01 (real stack).
+
+## 1. Apply latency (API receive -> row in rating_events), no competing Spark jobs
+ingestedAt minus the event timestamp (assigned by the API at POST time), 6 events that day:
+  12, 15, 20, 20, 21, 44 seconds   (median 20 s, max 44 s)
+Plus the three runs in section 4 below: ~33 s, ~57 s after a restart, ~75 s during a crash restart.
+Earlier, with other Spark jobs running at the same time (2026-09-29): 32-60 s, once over 4 minutes.
+Small sample. The design text said "5-10 seconds"; that estimate was wrong and is corrected in
+add-demo-web-client/design.md D-2.
+
+## 2. Where the time goes
+pipeline.py runs three queries that are chained: Q1 Kafka -> raw_events/ (file sink), then Q2 and
+Q3 read raw_events/ as a FILE source (valid -> serve_batch, invalid -> quarantine), each with a 5 s
+trigger. An event waits for a Q1 batch, then for a Q2 batch.
+Batches that exceeded the trigger (the log only prints those; 25 samples): median 10.3 s,
+min 5.4 s, max 25.6 s. Because a batch is longer than the 5 s trigger, runs follow each other
+without pause, so latency ~ 2 batches ~ 20 s (matches the median). Lowering trigger_seconds would
+therefore not help.
+NOT profiled: which step of serve_batch (Parquet append, state store, Mongo) takes most of the ~10 s.
+
+## 3. Correction: "small files accumulating in raw_events" is not supported
+Earlier notes (TESTING_GUIDE, p2_demo_ui.txt) blamed slowing file listing on an ever-growing number
+of small files in raw_events/. Today raw_events/ has 31 files (260 KB); listing 31 files still takes
+2.2-4.5 s per call on the Docker Desktop/WSL2 bind mount, and latency was LOWER than on 29/09 when it
+had fewer files. What the data does support: CPU contention (328 zombie processes from a runaway
+loop, ad-hoc Spark jobs run during tests) and a high fixed cost per batch on this setup.
+
+## 4. `streaming` service (docker-compose): auto-restart and resume
+Change: the pipeline is now a compose service (restart: unless-stopped, healthcheck, log cap,
+PYTHONUNBUFFERED) instead of `docker compose exec spark python -m streaming.pipeline`. `spark` got
+restart: unless-stopped too. It shares the existing ivy cache volume so the Kafka/Mongo connector jars
+are not downloaded again (works offline). pipeline.py now ends with spark.streams.awaitAnyTermination().
+
+Test 1 — normal: POST /ratings svc-test-0001 -> applied after ~33 s.
+Test 2 — `docker kill`: the container stayed `exited`, RestartCount 0. Docker treats `docker kill`
+  as a manual stop, and unless-stopped never restarts what the user stopped, so this was NOT a valid
+  crash test. Rating svc-test-0002 posted while it was down; after `docker start`, it was applied
+  ~57 s later (batch 56): events queued in Kafka during an outage are not lost.
+Test 3 — real crash: `pkill -9 java` inside the container. Docker restarted it within 2 s
+  (RestartCount 0 -> 1), health returned to healthy, and svc-test-0003, posted during the restart,
+  was applied after ~75 s (batch 58).
+Also: only one pipeline process exists (0 in `spark`, 1 in `streaming`).
+
+## 5. Not tested
+- A real Docker Desktop restart (that is the case that matters; the policy is the same one that
+  already brought api/mongo/kafka back every time, and `spark` had no policy and stayed Exited(255)).
+- awaitAnyTermination ending the process when ONLY Q1 or Q3 dies (the crash in Test 3 killed the JVM).
+- First start on an empty Mongo volume (expected: restarts until `movies` is loaded).
+- Cold start: the first event after a restart took ~57-75 s, noticeably slower than steady state.

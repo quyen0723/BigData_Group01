@@ -1,0 +1,25 @@
+test_id,category,scenario,expected,actual,result,evidence_ref
+T01,API validation,GET /recommendations/1?k=0,HTTP 422,HTTP 422 (ctx ge=1),PASS,p2_4_2_api_traces.txt
+T02,API validation,GET /recommendations/1?k=51,HTTP 422,HTTP 422 (ctx le=50),PASS,p2_4_2_api_traces.txt
+T03,API validation,GET /recommendations/-5,HTTP 422,HTTP 422 (ctx gt=0),PASS,p2_4_2_api_traces.txt
+T04,API validation,invalid input causes no store lookup,repo.calls empty,confirmed via unit test spy,PASS,tests/unit/test_api.py::test_k_out_of_bounds_rejected_with_422_and_no_store_lookup
+T05,Unknown user,GET /recommendations/999999999 (no user_history doc),HTTP 200 tier=0_history (not an error),HTTP 200 tier=0_history strategy=POPULARITY matches popular_movies.json top-5 exactly,PASS,p2_4_2_api_traces.txt
+T06,Warm ALS user,GET /recommendations/1 (has user_recommendations doc),tier=enough_history strategy=ALS+CONTENT,confirmed,PASS,p2_4_2_api_traces.txt
+T07,Cold-start (46k),GET /recommendations/127249 (interaction_count=69 no ALS doc),tier=enough_history fallbackReason=als_artifact_missing,confirmed,PASS,p2_4_2_api_traces.txt
+T08,Exclusion (base),user with 141 rated movies,0 overlap between rated set and recommendations,confirmed 0 overlap,PASS,p2_4_2_api_traces.txt
+T09,Exclusion (fresh),rate the #1 ALS recommendation via Kafka then re-request,that movieId absent from next response despite precomputed doc still containing it,movieId 60376 correctly excluded after streaming update,PASS,this session (2026-09-27)
+T10,Streaming validation,eventId empty,quarantined reason=invalid_event_id,confirmed,PASS,p2_5_2_streaming.txt
+T11,Streaming validation,userId=0,quarantined reason=invalid_user_id,confirmed,PASS,p2_5_2_streaming.txt
+T12,Streaming validation,unknown movieId,quarantined reason=unknown_movie_id,confirmed,PASS,p2_5_2_streaming.txt
+T13,Streaming validation,rating=7.0,quarantined reason=invalid_rating_value,confirmed,PASS,p2_5_2_streaming.txt
+T14,Streaming validation,timestamp=0 / far future,quarantined reason=invalid_timestamp (both),confirmed,PASS,p2_5_2_streaming.txt
+T15,Streaming validation,invalid events do not touch serving state,user_history/user_rated unchanged after 6 invalid events,confirmed interaction_count stayed 3,PASS,p2_5_2_streaming.txt
+T16,Idempotency,same eventId sent 3x,ledger has exactly 1 doc; interaction_count unaffected by replay,confirmed (ledger 6->7 not 6->9),PASS,p2_5_2_streaming.txt
+T17,Curated integrity,curated_ratings after streaming appends,no _spark_metadata directory (would hide 32M historical rows),confirmed absent,PASS,p2_5_2_streaming.txt
+T18,Kill/restart streaming,Docker restarted overnight (unplanned, real event) then pipeline relaunched,resumes from checkpoint without reprocessing/crashing; new events after restart processed correctly,pipeline_state.lastBatchId continued advancing; new user 300002's 3 ratings applied correctly,PASS,this session (2026-09-27)
+T19,Promotion gate FAIL path,candidate with unreadable ALS model file,gate FAILs safely (no crash); serving_meta unchanged byte-for-byte; candidate marked rejected,confirmed: G1-G3 FAIL with clear reason, G4-G7 PASS on real data, serving_meta.activatedAt identical before/after,PASS,p2_6_2_promotion_fail_run_log.txt
+T20,Promotion gate PASS path,candidate with valid differing ALS model,gate PASSes; serving_meta switches atomically; API reflects new modelVersion,BLOCKED: source ALS model bundle on Drive has 2 corrupted (0-byte) userFactors parquet files -- confirmed not a local download issue (re-downloaded twice identically 0 bytes); reported to Person 1,BLOCKED,p2_6_2_promotion_fail_run_log.txt
+T21,Rollback,rollback to previous version,pointer restored to previousVersion,BLOCKED: no successful PASS activation exists yet to roll back from (only bootstrap has run),BLOCKED,-
+T22,Retrain trigger (below threshold),pending events < N_min and no --force,no handoff created,confirmed (7 < 50),PASS,p2_env or session log
+T23,Retrain trigger (force),--force with pending events,handoff package created with manifest.json + delta_ratings.parquet; watermark advances,confirmed rowCount=7 userCount=1 newUserCount=1; rerun shows 0 pending,PASS,session log (2026-09-26)
+T24,Stage candidate,stage a version not yet active,API continues serving the previously active version,confirmed API still returned v1.0.0 after staging v1.1.0,PASS,session log (2026-09-26)

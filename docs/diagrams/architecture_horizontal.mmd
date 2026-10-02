@@ -1,0 +1,103 @@
+---
+title: MovieLens Hybrid Recommendation System
+config:
+  theme: base
+  htmlLabels: false
+  fontFamily: "Arial, Helvetica, sans-serif"
+  themeVariables:
+    fontSize: 16px
+    lineColor: "#475569"
+    edgeLabelBackground: "#FFFFFF"
+  flowchart:
+    htmlLabels: false
+    curve: basis
+    nodeSpacing: 30
+    rankSpacing: 45
+    padding: 12
+---
+flowchart LR
+
+  %% ============ 1. INGESTION ============
+  subgraph L1["1. Data Ingestion and Curated Storage"]
+    direction TB
+    HD["Historical Data"] --> CSV["MovieLens CSV"] --> ETL["PySpark Batch ETL"] --> CTJ["Clean Transform Join"]
+    APP1["USER APP"] --> RATE["User Rating"] --> KAFKA["Kafka"] --> SS["Structured Streaming"] --> RAW["Raw Event Storage"] --> VAL["Validate Transform"] --> UHUPD["Update User History"]
+  end
+
+  PARQUET[("Curated Parquet")]
+  MONGO[("MongoDB Serving Store")]
+
+  %% ============ 2A. OFFLINE ============
+  subgraph L2A["2A. Offline Analytics and Modeling"]
+    direction TB
+    MR["MapReduce Statistics"]
+    MODEL["Recommendation Modeling"]
+    SQL["Spark SQL Analytics"]
+    MODEL --> SPLIT["Data Split and Evaluation Setup"]
+    MR ~~~ SPLIT
+    SQL ~~~ SPLIT
+    SPLIT --> MEAN["Movie Mean Baseline"]
+    SPLIT --> ALS["ALS Training"]
+    SPLIT --> POP["Popularity Baseline"]
+    SPLIT --> CB["Content-Based"]
+    MEAN --> RMSE["Rating Prediction RMSE"]
+    ALS --> RMSE
+    ALS --> ALSTOP["ALS Top-N"]
+    ALS --> RANK["Ranking Recall and NDCG"]
+    POP --> RANK
+    CB --> RANK
+    POP --> POPTOP["Popularity Top-N"]
+    CB --> SIM["Similar-Movie Lists"]
+    ALSTOP --> PUB1["Publish Activate"]
+    POPTOP --> PUB1
+    SIM --> PUB1
+  end
+
+  %% ============ 3. REFRESH ============
+  subgraph L3["3. Feedback and Periodic Model Refresh"]
+    direction TB
+    ACC["Accumulated curated data"] --> RET["Scheduled Retraining"] --> CAND["Candidate Model Version"] --> GATE{"Promotion Gate"}
+    GATE -->|Fail| KEEP["Keep Current Model"]
+    GATE -->|Pass| REGEN["Regenerate Serving Artifacts"] --> PUB2["Publish Activate New Version"]
+    KEEP -.-> RET
+  end
+
+  %% ============ 2B. SERVING ============
+  subgraph L2B["2B. Online Serving"]
+    direction TB
+    APP2["USER APP Request"] --> REQ["Recommendation Request"] --> API["Recommendation API"] --> CHECK["User History Check"]
+    CHECK --> Z["0 history: Popularity"]
+    CHECK --> F["Few history: Content + Popularity"]
+    CHECK --> E["Enough history: ALS + Content"]
+    Z --> SRC["Selected Sources"]
+    F --> SRC
+    E --> SRC
+    SRC --> EXCL["Exclude Already-Rated"] --> POL["Optional Policy Filter"] --> FUS["Optional Fusion Re-rank"] --> RESP["Top-N Response"]
+  end
+
+  %% ============ CROSS-LAYER FLOWS ============
+  L1 --> PARQUET
+  L1 -.->|user history| MONGO
+  PARQUET --> L2A
+  PARQUET --> L3
+  L2A -->|publish| MONGO
+  L3 --> MONGO
+  MONGO -.->|serving lookups| L2B
+
+  %% ============ STYLES ============
+  classDef ingest fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A
+  classDef offline fill:#DCFCE7,stroke:#16A34A,color:#14532D
+  classDef refresh fill:#FFEDD5,stroke:#EA580C,color:#7C2D12
+  classDef serve fill:#EDE9FE,stroke:#7C3AED,color:#3B0764
+  classDef store fill:#FEF3C7,stroke:#B45309,color:#78350F,stroke-width:2px
+
+  class HD,CSV,ETL,CTJ,APP1,RATE,KAFKA,SS,RAW,VAL,UHUPD ingest
+  class MR,SQL,MODEL,SPLIT,MEAN,POP,CB,ALS,RMSE,RANK,SIM,POPTOP,ALSTOP,PUB1 offline
+  class ACC,RET,CAND,GATE,KEEP,REGEN,PUB2 refresh
+  class APP2,REQ,API,CHECK,Z,F,E,SRC,EXCL,POL,FUS,RESP serve
+  class PARQUET,MONGO store
+
+  style L1 fill:#F8FAFF,stroke:#2563EB,stroke-width:2px,color:#1E3A8A
+  style L2A fill:#F7FDF9,stroke:#16A34A,stroke-width:2px,color:#14532D
+  style L3 fill:#FFFAF5,stroke:#EA580C,stroke-width:2px,color:#7C2D12
+  style L2B fill:#FAF8FF,stroke:#7C3AED,stroke-width:2px,color:#3B0764

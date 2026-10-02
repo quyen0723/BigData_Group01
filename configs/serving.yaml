@@ -1,0 +1,54 @@
+# Serving configuration — Person 2 (Recommendation API + MongoDB), WBS 2.3/2.4/4.x
+# All tunable values here are design parameters (PRD §9.1, §21): not universal constants.
+# Rationale for defaults lives in design.md (D-6, D-8) — cite there, not here.
+
+mongo:
+  uri_env: "MONGO_URI"              # never hardcode credentials; read from environment
+  db: "movielens"
+  collections:
+    popular_movies: "popular_movies"
+    similar_movies: "similar_movies"
+    user_recommendations: "user_recommendations"   # als_topn.json loads here (CONTRACTS §3.3)
+    user_history: "user_history"
+    movies: "movies"                # additive
+    user_rated: "user_rated"        # additive
+    rating_events: "rating_events"  # additive
+    serving_meta: "serving_meta"    # additive
+    model_registry: "model_registry" # additive
+    pipeline_state: "pipeline_state" # additive
+  serving_meta_cache_ttl_seconds: 5  # D-5: pointer cache TTL, response consistency window
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  k_default: 10
+  k_min: 1
+  k_max: 50
+  demo_enabled: false                              # gates GET /demo and GET /debug/users/{userId}
+  kafka_bootstrap_servers_env: "KAFKA_BOOTSTRAP_SERVERS"  # add-demo-web-client D-6/D-7
+  ratings_topic: "ratings.v1"                       # must match configs/streaming.yaml kafka.topic
+  produce_timeout_seconds: 10                       # POST /ratings: flush() wait before 503
+  rating_poll_timeout_seconds: 60                   # demo page: wait for "applied" (measured 42s on the demo machine)
+
+# Demo "new movie" candidate source (demo-use-case-scenarios D-4..D-6).
+new_items:
+  enabled: true
+  slots: 1                  # max new movies placed per response
+  position: 3               # 1-based rank where the first new movie is inserted
+  window_days: 30           # a demo movie counts as "new" for this long after addedAt
+  id_range_start: 9000000   # reserved movieId range for demo movies (MovieLens max is 292,757)
+
+routing:
+  T_few_enough: 10          # PROVISIONAL until evidence/p2_tier_threshold.csv (D-11) chooses it
+  seeds_per_user: 10         # S: positive/recent movieIds used as content seeds
+  recent_cap: 50             # R: user_history.recent_movieIds bound
+  positive_cap: 50           # P: user_history.positive_movieIds bound
+  fusion:
+    rrf_k: 60                 # standard RRF smoothing constant
+    weight_popularity_in_few: 0.3    # β_p — PRD §21: "not fixed truths", not yet tuned
+    weight_content_in_enough: 0.3    # β_c — not yet tuned
+
+active_model_version: "v1.0.0"   # bootstrap default; live value comes from serving_meta after load
+
+logging:
+  api_log_path: "logs/api.jsonl"

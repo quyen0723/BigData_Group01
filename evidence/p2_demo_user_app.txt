@@ -1,0 +1,73 @@
+# demo-user-app-personas — evidence (real stack, real browser pane, api.demo_enabled=true).
+# Date: 2026-10-01. Pages: /app (user), /admin (= the former /demo; /demo still serves it).
+
+## 1. GET /users/{userId}/ratings on the real MongoDB
+user 1 (limit 3): total 149, newest first (Godfather 3.5, The Puppetmaster 5.0, Willie & Phil 5.0 —
+the ratings made during earlier tests today). limit=50 answers in ~12 ms.
+user 599998 rated a demo movie that was deleted later: listed with inCatalog=false, title "".
+unknown user 888888: 200 {"total":0,"items":[]}. limit=0 / limit=51 / userId=0: 422.
+/admin and /demo return byte-identical pages (same md5).
+
+## 2. Journeys through the user app (clicks, Enter key, no technical wording)
+A  "Minh": empty name -> error beside the field (role=alert), focus back to the field, nothing stored.
+   "Minh" -> userId 591751 (0 ratings), popular movies labelled "Đang được yêu thích", invitation to rate,
+   empty-history hint, account remembered in localStorage. Rated Planet Earth 4 stars with the keyboard
+   -> applied in ~3 s -> feed now "Giống phim bạn đã thích", Planet Earth gone, history lists it first,
+   invitation gone, "Bạn đã đánh giá 1 phim."
+B  An (700008): feed 10 x "Giống phim bạn đã thích". Rated Godfather Part II 4 stars with the mouse:
+   toast, card dimmed with "Đang cập nhật gợi ý…", applied in ~9 s, feed reloaded by itself, the movie left
+   the feed, history shows it first with 4, "Bạn đã đánh giá 5 phim."
+C  Bình (user 1, ALS): 4 x "Dành riêng cho bạn" + 6 x "Giống phim bạn đã thích", 149 ratings, 50 history rows.
+   Chi (127249, no ALS document): ordinary list, 10 x "Giống phim bạn đã thích", no error or fallback wording.
+Visible text was scanned for tier, strategy, fallback, modelVersion, eventId, batchId, score, popularity,
+als_artifact: none. (The one hit for "history" was the film "American History X".)
+
+## 3. Error and slow paths, as the user sees them
+Kafka stopped: star click -> card "Đang gửi đánh giá…" -> after 11 s toast "Chưa lưu được đánh giá. Vui lòng
+thử lại." (no Kafka, no 503 in the text), card unlocked. Recommendations kept loading while Kafka was down.
+Kafka back healthy after 24 s.
+Streaming stopped (Kafka up): rating accepted, card "Đang cập nhật gợi ý…", after the poll window the card says
+"Đánh giá đã lưu, gợi ý sẽ cập nhật sau." (no pipeline/Kafka wording, stars stay locked). After `start streaming`
+the rating was applied ~52 s later (history total 5 -> 6): nothing lost.
+
+## 4. Measured UI/UX baseline at 375 px (skill ui-ux-pro-max checklist)
+                                  /demo BEFORE      /admin NOW       /app
+horizontal overflow                17 px             0                0
+main column width                  32 px             375 px           343 px (1 column)
+star control                       21 x 20 px        40 x 40          44 x 44 (fits the card)
+primary button contrast            3.22:1            5.17:1           4.70:1
+muted text / body text contrast    4.99 / 15.42      unchanged        7.36 / 20.07
+inputs without a visible label     2                 0                0
+aria-live regions                  0                 1                1
+prefers-reduced-motion rule        no                yes              yes
+:focus-visible rule                no                yes              yes
+external resources                 none              none             none (no http(s) src/href)
+emoji or symbol characters as icons (app)  -         -                0
+Keyboard: Tab from the logout button reaches the first star (aria-label "Chấm 1 sao cho Planet Earth (2006)",
+2 px yellow focus ring); Enter submits the rating.
+
+## 5. Two-tab story
+Tab 1 = An on /app, tab 2 = /admin. Admin created "Phim hình sự mới" (Crime|Drama) -> id 9000004. After a
+fresh load An's feed shows it at rank 3, badge "Mới", reason "Mới thêm". Deleted it, then created another:
+id 9000005 (never reuses 9000004). A refresh event on An's tab removed the deleted movie and later added the new
+one at rank 3 without any click; a second refresh with no change left the DOM nodes untouched.
+LIMITATION: in this browser pane document.visibilityState is "hidden" in both tabs and visibilitychange never
+fires when tabs are switched, so the refresh handler was exercised by dispatching that event, not by a real tab
+switch. The event itself is standard browser behaviour; the handler logic and its guards are what was verified.
+Demo movies deleted afterwards (movies back to 87,585).
+
+## 6. Bugs found by running the page, fixed
+1. visibilitychange reloaded the feed (with skeleton, replacing every card) on every return to the tab, even
+   when nothing changed, and could unlock a card whose rating was pending (double rating possible). Now the
+   refresh is silent, redraws only when the list changed, and is skipped while a rating is pending.
+2. The pending-rating counter leaked on logout (cancelled polls never decremented it), which blocked every later
+   refresh. clearPolls() now resets it.
+3. After submitting with the keyboard, focus fell to <body> (the starred button became disabled), and again when
+   the feed was redrawn. Focus now stays on the card's status line and returns to the "Dành cho bạn" heading.
+4. Star rows were not aligned across cards with different title lengths; the row now sits at the card bottom.
+
+## 7. Not covered
+- No screenshots are stored as files (the tooling returns images only in the conversation).
+- Real tab switching (see section 5) and a real phone: only a 375 px emulated viewport was used.
+- Poll window length: the page reads api.rating_poll_timeout_seconds (60) from /debug/system; the slow-path run
+  waited for that window, but it was not timed to the second.

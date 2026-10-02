@@ -1,0 +1,25 @@
+# WBS 7.2/8.2 — API load test evidence (real stack, single sequential client from host)
+# Date: 2026-09-27. N=1000 requests, mixed pool: 400 warm (has ALS doc), ~??? cold-start
+# (interaction_count>=10, no ALS doc), 200 brand-new (no user_history doc).
+# NOTE: pool composition is chosen to exercise all 3 tiers for a load test, not to
+# reflect true population proportions (true cold-start share is ~23%, 46,340/200,948).
+
+## Throughput / latency (sequential, single client — round-trip incl. network)
+N=1000, total_time=38.2s, throughput=26.2 req/s
+latency (ms): p50=25.8  p95=98.8  p99=163.6  max=293.7  min=11.9
+
+## Strategy / tier / fallback distribution (from logs/api.jsonl, all 1000 requests logged)
+tier:
+  enough_history: 805 (80.5%)
+  0_history:      195 (19.5%)
+strategy:
+  ALS+CONTENT:        691 (69.1%)
+  POPULARITY:         195 (19.5%)
+  CONTENT+POPULARITY: 114 (11.4%)
+fallbackReason:
+  none:                886 (88.6%)
+  als_artifact_missing: 114 (11.4%)
+
+PASS: every one of the 1000 requests was logged (spec: "Request observability" —
+one structured record per request with tier/strategy/fallbackReason/modelVersion/k/
+n_returned/latency_ms). No 5xx errors across all 1000 requests.

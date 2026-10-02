@@ -1,0 +1,106 @@
+=== user_recommendations point lookup (userId, modelVersion) ===
+query: {'userId': 1, 'modelVersion': 'v1.0.0'}
+{
+  "stage": "FETCH",
+  "inputStage": {
+    "stage": "IXSCAN",
+    "keyPattern": {
+      "userId": 1,
+      "modelVersion": 1
+    },
+    "indexName": "userId_1_modelVersion_1",
+    "isMultiKey": false,
+    "multiKeyPaths": {
+      "userId": [],
+      "modelVersion": []
+    },
+    "isUnique": true,
+    "isSparse": false,
+    "isPartial": false,
+    "indexVersion": 2,
+    "direction": "forward",
+    "indexBounds": {
+      "userId": [
+        "[1, 1]"
+      ],
+      "modelVersion": [
+        "[\"v1.0.0\", \"v1.0.0\"]"
+      ]
+    }
+  }
+}
+
+=== similar_movies $in lookup (movieId in seeds, modelVersion) ===
+query: {'movieId': {'$in': [296, 318, 858]}, 'modelVersion': 'v1.0.0'}
+{
+  "stage": "FETCH",
+  "inputStage": {
+    "stage": "IXSCAN",
+    "keyPattern": {
+      "movieId": 1,
+      "modelVersion": 1
+    },
+    "indexName": "movieId_1_modelVersion_1",
+    "isMultiKey": false,
+    "multiKeyPaths": {
+      "movieId": [],
+      "modelVersion": []
+    },
+    "isUnique": true,
+    "isSparse": false,
+    "isPartial": false,
+    "indexVersion": 2,
+    "direction": "forward",
+    "indexBounds": {
+      "movieId": [
+        "[296, 296]",
+        "[318, 318]",
+        "[858, 858]"
+      ],
+      "modelVersion": [
+        "[\"v1.0.0\", \"v1.0.0\"]"
+      ]
+    }
+  }
+}
+
+=== user_rated $in lookup for exclusion (covered query) ===
+query: {'userId': 1, 'movieId': {'$in': [60376, 96257, 157148, 101971, 112577]}}
+{
+  "stage": "PROJECTION_COVERED",
+  "transformBy": {
+    "movieId": 1,
+    "_id": 0
+  },
+  "inputStage": {
+    "stage": "IXSCAN",
+    "keyPattern": {
+      "userId": 1,
+      "movieId": 1
+    },
+    "indexName": "userId_1_movieId_1",
+    "isMultiKey": false,
+    "multiKeyPaths": {
+      "userId": [],
+      "movieId": []
+    },
+    "isUnique": true,
+    "isSparse": false,
+    "isPartial": false,
+    "indexVersion": 2,
+    "direction": "forward",
+    "indexBounds": {
+      "userId": [
+        "[1, 1]"
+      ],
+      "movieId": [
+        "[60376, 60376]",
+        "[96257, 96257]",
+        "[101971, 101971]",
+        "[112577, 112577]",
+        "[157148, 157148]"
+      ]
+    }
+  }
+}
+

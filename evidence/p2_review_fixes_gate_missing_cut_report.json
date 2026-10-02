@@ -1,0 +1,46 @@
+{
+  "activeVersion": "v1.0.0",
+  "candidateVersion": "v1.9.0",
+  "activeRmse": null,
+  "candidateRmse": null,
+  "candidateRmseSelfReported": null,
+  "checks": [
+    {
+      "name": "G7 version numbering",
+      "pass": true,
+      "detail": "active=v1.0.0 candidate=v1.9.0 already_used=False"
+    },
+    {
+      "name": "G1 candidate RMSE <= active RMSE * (1+eps)",
+      "pass": false,
+      "detail": "RMSE computation failed: no split.cut_test in either model card; refusing to evaluate on the full curated ratings"
+    },
+    {
+      "name": "G2 candidate RMSE < MovieMean baseline",
+      "pass": false,
+      "detail": "RMSE computation failed: no split.cut_test in either model card; refusing to evaluate on the full curated ratings"
+    },
+    {
+      "name": "G3 candidate RMSE within sanity band",
+      "pass": false,
+      "detail": "RMSE computation failed: no split.cut_test in either model card; refusing to evaluate on the full curated ratings"
+    },
+    {
+      "name": "G4 staged user_recommendations schema valid",
+      "pass": false,
+      "detail": "docs=0 oversized_lists=0 duplicate_users=0"
+    },
+    {
+      "name": "G5 no already-rated in candidate recommendations",
+      "pass": true,
+      "detail": "0 leaked"
+    },
+    {
+      "name": "G6 candidate user coverage >= active",
+      "pass": false,
+      "detail": "candidate=0 active=154,608"
+    }
+  ],
+  "result": "FAIL",
+  "ranAt": "2026-10-02T16:05:50.992119+00:00"
+}

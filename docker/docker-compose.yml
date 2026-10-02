@@ -1,0 +1,179 @@
+# docker/docker-compose.yml — Person 2 runtime (design.md D-1).
+# Run from repo root: `docker compose -f docker/docker-compose.yml up -d`
+# Requires: `movielens32m/` bundle downloaded to repo root (see README), `.env` copied from `.env.example`.
+services:
+
+  mongo:
+    image: mongo:7.0
+    container_name: movielens-mongo
+    command: ["--wiredTigerCacheSizeGB", "3"]
+    ports:
+      - "27017:27017"          # host access for mongosh/Compass during dev
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: movielens-kafka
+    ports:
+      - "9094:9094"             # host access (debugging only); services use kafka:9092 internally
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:9094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9094"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3     # configs/streaming.yaml kafka.partitions
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  spark:
+    build:
+      context: ..
+      dockerfile: docker/spark.Dockerfile
+    image: movielens-spark:local   # shared with the `streaming` service below
+    container_name: movielens-spark
+    restart: unless-stopped        # idle exec shell: comes back after a Docker Desktop restart
+    depends_on:
+      mongo:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      MONGO_URI: "mongodb://mongo:27017"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    volumes:
+      - ../movielens32m:/data
+      - ../src:/app/src
+      - ../configs:/app/configs
+      - ../contracts:/app/contracts
+      - ../evidence:/app/evidence
+      - spark-ivy-cache:/root/.ivy2
+    working_dir: /app
+    # No default command: loader / orchestration jobs are run with `docker compose exec spark ...` (see README).
+    # The streaming pipeline is NOT run from here any more: it is the `streaming` service below.
+    tty: true
+    stdin_open: true
+
+  # The Structured Streaming pipeline as a managed service. It used to be started by hand with
+  # `docker compose exec spark python -m streaming.pipeline`, so it died with every Docker Desktop
+  # restart and rating clicks sat on "pending" until someone noticed. Now it restarts by itself
+  # and resumes from its checkpoint (verified: evidence/p2_5_2_streaming.txt).
+  # NEVER also run the pipeline by hand: it is a singleton, two drivers on one checkpoint corrupt it.
+  streaming:
+    build:
+      context: ..
+      dockerfile: docker/spark.Dockerfile
+    image: movielens-spark:local
+    container_name: movielens-streaming
+    depends_on:
+      mongo:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      MONGO_URI: "mongodb://mongo:27017"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      PYTHONUNBUFFERED: "1"   # without a TTY print() is block-buffered, so `docker logs` would not show serve_batch lines
+    volumes:
+      - ../movielens32m:/data
+      - ../src:/app/src
+      - ../configs:/app/configs
+      - ../contracts:/app/contracts
+      - ../evidence:/app/evidence
+      # Same cache volume as `spark`: the Kafka/Mongo connector jars are already in it, so this
+      # starts without internet. A fresh volume would try to download them.
+      - spark-ivy-cache:/root/.ivy2
+    working_dir: /app
+    command: ["python", "-m", "streaming.pipeline"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'streaming.pipeline' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"    # Spark prints a WARN every few seconds; without a cap this fills the disk over days
+        max-file: "3"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    container_name: movielens-api
+    depends_on:
+      mongo:
+        condition: service_healthy
+      # No hard dependency on kafka (design.md D-7): a Kafka outage must not
+      # block GET /recommendations. POST /ratings degrades to 503 instead.
+    environment:
+      MONGO_URI: "mongodb://mongo:27017"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    ports:
+      # Host port 8088, not 8000: on Windows dev machines port 8000 is commonly
+      # taken by other local tools (e.g. Laragon's PHP dev server on
+      # 127.0.0.1:8000) which silently wins that port ahead of Docker's proxy.
+      # Container-internal port stays 8000.
+      - "8088:8000"
+    volumes:
+      - ../movielens32m:/data
+      - ../src:/app/src
+      - ../configs:/app/configs
+      - ../logs:/app/logs
+    working_dir: /app
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # Dev-only MongoDB web UI with full CRUD, bound to 127.0.0.1 (not reachable from
+  # the LAN). Login comes from ../.env (ME_CONFIG_BASICAUTH_USERNAME / _PASSWORD).
+  # Edits here hit the live serving store and bypass the loaders/streaming pipeline
+  # (see docs/TESTING_GUIDE.md). Never Reindex/Compact user_rated (32M docs): it
+  # blocks Mongo and stalls the API.
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: movielens-mongo-express
+    depends_on:
+      mongo:
+        condition: service_healthy
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      ME_CONFIG_MONGODB_URL: "mongodb://mongo:27017/"
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_BASICAUTH: "true"
+    ports:
+      - "127.0.0.1:8081:8081"
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+  spark-ivy-cache:

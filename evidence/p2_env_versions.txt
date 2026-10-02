@@ -1,0 +1,49 @@
+# WBS 2.6 — Runtime environment versions (real, from a clean stack build+run)
+# Verified 2026-09-26/27, docker compose stack (docker/docker-compose.yml)
+
+## Images
+mongo:7.0
+apache/kafka:4.3.1
+docker-spark:latest  (built from docker/spark.Dockerfile)
+docker-api:latest    (built from docker/api.Dockerfile)
+
+## Spark container
+Python 3.12.14
+PySpark 3.5.7 (matches Person 1's configs/requirements.txt pin)
+Java: default-jdk-headless (OpenJDK 21, Debian trixie base)
+
+## Spark packages (resolved via spark.jars.packages, configs/streaming.yaml)
+org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7
+org.apache.spark:spark-token-provider-kafka-0-10_2.12:3.5.7
+org.apache.kafka:kafka-clients:3.4.1
+org.mongodb.spark:mongo-spark-connector_2.12:10.7.0
+org.mongodb:mongodb-driver-sync:5.1.4
+(full resolution tree in any loader/pipeline run log, e.g. evidence/p2_5_2_streaming.txt)
+
+## Python packages (configs/requirements_serving.txt, pinned after first working build)
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+pymongo==4.18.2
+pydantic==2.13.5
+pyyaml==6.0.3
+pytest==9.1.1
+httpx==0.28.1
+confluent-kafka==2.6.1
+numpy==2.3.4          # required by pyspark.ml — missing on first build (fixed)
+setuptools>=80         # pyspark 3.5.x's pyspark.ml imports distutils, removed from
+                        # stdlib in Python 3.12 — setuptools>=60 vendors a working shim (fixed)
+
+## Environment issues found and fixed during setup (real, not hypothetical)
+1. mongo-spark-connector 10.4.0 (initial guess) works, but 10.7.0 is the latest version
+   confirmed compatible with Spark 3.2-3.5 + Mongo 4.2+ (mongodb.com/docs/spark-connector/v10.x) —
+   v11.x requires Spark 4.0+, which pyspark==3.5.7 does not satisfy.
+2. `ModuleNotFoundError: numpy` on first pyspark.ml import — added numpy to requirements.
+3. `ModuleNotFoundError: distutils` on first pyspark.ml import (Python 3.12 removed it from
+   stdlib; pyspark 3.5.x's pyspark/ml/image.py still imports it) — added setuptools>=80,
+   which vendors a working `import distutils` shim.
+4. Host port 8000 was already bound by another local dev tool (Laragon PHP dev server on
+   127.0.0.1:8000) — moved the API's host-mapped port to 8088 in docker-compose.yml.
+5. Kafka's host-mapped listener (localhost:9094) is intermittently flaky under Docker
+   Desktop/WSL2 on Windows (TCP connects fine, but the Kafka wire-protocol handshake
+   occasionally gets dropped) — the actual pipeline always uses the internal listener
+   (kafka:9092), which was tested repeatedly with zero failures.

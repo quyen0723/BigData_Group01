@@ -1,0 +1,40 @@
+# demo-use-case-scenarios — task 1.1-1.4 evidence (real stack).
+# Date: 2026-10-01. Question (design.md D-7): does the running Structured Streaming
+# pipeline accept a rating for a movie that was added to `movies` AFTER the pipeline
+# started? pipeline.py builds `movies_df` once in main() for the broadcast join that
+# implements the `unknown_movie_id` rule, so a stale read would quarantine such ratings.
+
+## Setup
+- `spark` container had been stopped since the Docker Desktop restart; started it again.
+- `python -m streaming.pipeline` launched; log shows all three queries running at 04:38:42 UTC.
+- No code change to the pipeline in this experiment.
+
+## Test A — movie added after the pipeline started
+04:41:46Z  mongosh: movies.insertOne({_id: 9000000, title: "Streaming Check Movie",
+                    genres: "Crime|Drama", support: 0, addedAt: now})        (movies: 87,585 -> 87,586)
+04:41:46Z  POST /ratings {userId: 599998, movieId: 9000000, rating: 4.0, eventId: "check-newmovie-0001"}
+           -> 202 accepted (the API validates movieId with a live read of `movies`)
+04:42:30Z  rating_events._id = "check-newmovie-0001": {userId: 599998, movieId: 9000000, batchId: 43}
+           GET /ratings/check-newmovie-0001 -> applied after ~40s
+           user_rated: {userId: 599998, movieId: 9000000, rating: 4.0}
+           quarantine: no row for "check-newmovie-0001"
+PASS: the pipeline saw a movie created after it started and applied the rating, so the
+      stream-static join re-reads `movies` on each micro-batch. No pipeline change is needed
+      (task 1.3 skipped).
+
+## Test B — control: unknown movie published straight to Kafka (bypassing the API)
+Published {eventId: "ctrl-unknown-movie-0001", userId: 599998, movieId: 8888888, rating: 4.0}.
+quarantine: ('ctrl-unknown-movie-0001', 8888888, 'unknown_movie_id')
+PASS: validation for ids that are in neither the catalog nor the demo range is unchanged.
+
+## Cleanup and side effects to hand over
+- movies._id 9000000 deleted again (movies back to 87,585).
+- NOT undone, by design (ratings are never deleted): user_rated, user_history, rating_events
+  and a row appended to curated_ratings for (599998, 9000000). So `curated_ratings` now
+  holds a movieId that is absent from `curated_movies`. Person 1's retrain job must tolerate
+  or filter movieId >= 9,000,000 (tracked as task 8.4).
+
+## Not exercised here
+A rating for a movie created and rated within the SAME micro-batch window. The 5s trigger
+and the ~40s end-to-end latency make it unlikely in a demo; Test A already covers the
+realistic order (create the movie, then rate it).

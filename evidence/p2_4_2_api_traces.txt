@@ -1,0 +1,45 @@
+# WBS 4.2 / 4.7 — Recommendation API integration test evidence (real stack: Docker Compose, live Mongo + real M2 data)
+# Date: 2026-09-26. Stack: mongo:7.0, docker-api (FastAPI), 200,948 user_history, 32,000,204 user_rated,
+# movies=87,585, popular_movies=1, similar_movies=80,505, user_recommendations=154,608 (modelVersion=v1.0.0, active).
+
+## Case 1: warm user with ALS doc (userId=1)
+GET /recommendations/1?k=5
+-> tier=enough_history, strategy=ALS+CONTENT, fallbackReason=null, modelVersion=v1.0.0
+-> all 5 items source=als, ranks 1..5 consecutive
+PASS: enough-history user with an ALS document is served ALS+CONTENT with no fallback.
+
+## Case 2: cold-start user with history but no ALS doc (userId=127249, interaction_count=69)
+GET /recommendations/127249?k=5
+-> tier=enough_history, strategy=CONTENT+POPULARITY, fallbackReason=als_artifact_missing
+-> all 5 items source=content
+PASS: degradation chain (ALS -> Content) fires correctly for the 46,340 cold-start users
+      (interaction_count >= T but no user_recommendations doc for active version).
+
+## Case 3: brand-new user, no user_history document (userId=999999999)
+GET /recommendations/999999999?k=5
+-> tier=0_history, strategy=POPULARITY, fallbackReason=null
+-> items: [159817 Planet Earth, 318 Shawshank Redemption, 142115 The Blue Planet, 858 Godfather, 50 Usual Suspects]
+-> EXACT MATCH to artifacts/popular_movies.json top-5 (source data)
+PASS: unknown user (spec "Unknown user is valid") returns HTTP 200, tier 0_history, not an error.
+
+## Case 4: input validation (no store lookup on invalid input)
+GET /recommendations/1?k=0    -> HTTP 422 {"ctx":{"ge":1}}
+GET /recommendations/1?k=51   -> HTTP 422 {"ctx":{"le":50}}
+GET /recommendations/-5       -> HTTP 422 {"ctx":{"gt":0}}
+PASS: FastAPI Path(gt=0)/Query(ge=1,le=50) reject before the handler body runs.
+
+## Case 5: exact already-rated exclusion (userId=1, 141 rated movies)
+user_rated count for userId=1: 141
+GET /recommendations/1?k=10 recommendations movieIds ∩ user_rated movieIds: {} (empty set)
+PASS: zero overlap between a real user's exact rated set and their recommendations.
+
+## Bootstrap gate evidence (WBS 3.5, promotion_gate bootstrap mode)
+=== Bootstrap gate for v1.0.0 ===
+[PASS] G4 popular_movies count: expected 1, got 1
+[PASS] G4 movies count: expected 87,585, got 87,585
+[PASS] G4 user_history count: expected 200,948, got 200,948
+[PASS] G4 user_rated count: expected 32,000,204, got 32,000,204
+[PASS] G4 user_recommendations has docs: 154,608 docs for v1.0.0
+[PASS] G4 similar_movies count (~expected): expected ~80,505, got 80,505
+[PASS] G5 no already-rated in user_recommendations: 0 leaked (full scan: 1,546,068 recs x 32,000,204 rated rows)
+OK: v1.0.0 is now the active serving version.
