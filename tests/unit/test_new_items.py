@@ -86,6 +86,40 @@ def test_place_new_items_appends_when_list_is_shorter_than_position():
     assert [c.movie_id for c in placed] == [1, 9000001]
 
 
+def _scores(candidates):
+    return [c.score for c in candidates]
+
+
+def test_place_new_items_two_slots_keeps_scores_non_increasing():
+    """review finding 9 / spec "Placed new movies keep scores non-increasing": with slots > 1 every placed
+    item takes the score of the first item it displaces, so no score is larger than the one before it."""
+    final = [Candidate(movie_id=1, rank=1, score=0.9), Candidate(movie_id=2, rank=2, score=0.8),
+             Candidate(movie_id=3, rank=3, score=0.7)]
+    placed = new_items.place_new_items(final, [9000001, 9000002], slots=2, position=2, k=5)
+    assert [c.movie_id for c in placed] == [1, 9000001, 9000002, 2, 3]
+    assert _scores(placed) == [0.9, 0.8, 0.8, 0.8, 0.7]
+    assert _scores(placed) == sorted(_scores(placed), reverse=True)
+
+
+def test_place_new_items_at_the_end_takes_the_last_score_and_stays_ordered():
+    final = [Candidate(movie_id=1, rank=1, score=0.9), Candidate(movie_id=2, rank=2, score=0.6)]
+    placed = new_items.place_new_items(final, [9000001, 9000002], slots=2, position=5, k=5)
+    assert [c.movie_id for c in placed] == [1, 2, 9000001, 9000002]
+    assert _scores(placed) == [0.9, 0.6, 0.6, 0.6]
+
+
+def test_place_new_items_one_slot_matches_the_previous_behaviour():
+    final = [Candidate(movie_id=i, rank=i, score=1.0 - i / 10) for i in range(1, 6)]
+    placed = new_items.place_new_items(final, [9000001], slots=1, position=3, k=5)
+    assert [c.movie_id for c in placed] == [1, 2, 9000001, 3, 4]
+    assert placed[2].score == final[2].score
+
+
+def test_place_new_items_into_an_empty_list():
+    placed = new_items.place_new_items([], [9000001], slots=1, position=3, k=5)
+    assert [c.movie_id for c in placed] == [9000001]
+
+
 # ---- service wiring ----------------------------------------------------------
 
 def test_matching_new_movie_appears_at_reserved_rank_with_new_source():

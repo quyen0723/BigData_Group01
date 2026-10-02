@@ -162,6 +162,35 @@ def test_kafka_delivery_timeout_returns_503():
     assert resp.status_code == 503
 
 
+def test_timeout_detail_says_the_outcome_is_unknown_and_to_retry_with_the_same_event_id():
+    """review finding M2 / design D-6: a flush timeout does not mean the message was not sent."""
+    repo = FakeServingRepository(movies=MOVIES)
+    client = make_client(repo, FakeProducer(timeout=True))
+
+    resp = client.post("/ratings", json={"userId": 1, "movieId": 296, "rating": 4.0, "eventId": "E-1"})
+
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "may still be delivered" in detail
+    assert "same eventId" in detail
+
+
+def test_retry_after_a_timeout_publishes_the_same_event_id_again():
+    repo = FakeServingRepository(movies=MOVIES)
+    producer = FakeProducer(timeout=True)
+    client = make_client(repo, producer)
+    body = {"userId": 1, "movieId": 296, "rating": 4.0, "eventId": "E-1"}
+
+    assert client.post("/ratings", json=body).status_code == 503
+    producer.timeout = False
+    retry = client.post("/ratings", json=body)
+
+    assert retry.status_code == 202
+    assert retry.json()["eventId"] == "E-1"
+    sent = [json.loads(call["value"])["eventId"] for call in producer.calls]
+    assert sent == ["E-1", "E-1"]      # the pipeline's ledger collapses these into one applied event
+
+
 def test_recommendations_still_200_when_kafka_down():
     """spec: 'Reads unaffected by Kafka outage' — GET /recommendations never
     touches the producer dependency at all."""

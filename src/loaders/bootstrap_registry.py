@@ -9,6 +9,11 @@ Writes `model_registry{_id: version}` (status="active") and `serving_meta{_id:
 
 Run inside the spark container (or any container with pymongo + the mounted bundle):
     python -m loaders.bootstrap_registry --version v1.0.0
+
+This is the FIRST load only. It refuses to replace an active pointer that names another
+version (that is what orchestration.promotion_gate / manage_versions are for, with their
+checks), and its exact document counts stop matching once streaming has applied events or a
+second version was loaded.
 """
 from __future__ import annotations
 
@@ -34,6 +39,17 @@ EXPECTED = {
 EXPECTED_SIMILAR_MOVIES_APPROX = 80_505
 
 
+def active_pointer_conflict(existing: dict | None, version: str) -> str | None:
+    """Reason to refuse when `serving_meta.active` already names a different version, else None."""
+    if not existing or existing.get("modelVersion") in (None, version):
+        return None
+    return (
+        f"{existing['modelVersion']} is already the active serving version; refusing to replace it with {version}. "
+        "Change the active version with orchestration.promotion_gate (new version) or "
+        "orchestration.manage_versions (rollback), which run their checks first."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
@@ -44,6 +60,12 @@ def main() -> int:
     db_name = os.environ.get("MONGO_DB", "movielens")
     client = MongoClient(uri, serverSelectionTimeoutMS=5000)
     db = client[db_name]
+
+    conflict = active_pointer_conflict(db["serving_meta"].find_one({"_id": "active"}), args.version)
+    if conflict:
+        print(f"REFUSED: {conflict}")
+        client.close()
+        return 2
 
     checks: list[tuple[str, bool, str]] = []
 

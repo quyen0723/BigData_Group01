@@ -224,7 +224,7 @@
     "Sci-Fi": "#00c2ff", Thriller: "#ff8c42", War: "#8c8c00", Western: "#c08040"
   };
 
-  var state = { account: null, pollSeconds: 60, loadSeq: 0, pollTimers: [], pending: 0, lastLoadAt: 0, lastRecIds: "" };
+  var state = { account: null, pollSeconds: 60, loadSeq: 0, pollTimers: [], pending: 0, lastLoadAt: 0, lastRecIds: "", retryIds: {} };
 
   function $(id) { return document.getElementById(id); }
 
@@ -281,6 +281,7 @@
   function showChooser() {
     clearPolls();
     state.account = null;
+    state.retryIds = {};
     store.remove("sessionStorage", SESSION_KEY);
     $("home").hidden = true; $("who").hidden = true; $("chooser").hidden = false;
     document.title = "MovieLens — Chọn tài khoản";
@@ -324,6 +325,7 @@
 
   function login(account) {
     state.account = account;
+    state.retryIds = {};
     store.set("sessionStorage", SESSION_KEY, account);
     $("chooser").hidden = true; $("home").hidden = false; $("who").hidden = false;
     $("whoName").textContent = account.name;
@@ -422,8 +424,24 @@
     for (var i = 0; i < btns.length; i++) btns[i].disabled = locked;
   }
 
+  // A rating that did not come back as a clear yes or no (network error, 5xx, 503 timeout) may still have
+  // reached Kafka. Sending the same rating again with the same eventId lets the pipeline collapse the two into one.
+  function retryKey(uid, movieId, value) { return uid + ":" + movieId + ":" + value; }
+  // A final answer (202 or 422) for a movie clears the ids kept for EVERY star value of that movie: an id left behind at
+  // another value could be reused later and, if the broker had accepted it, the ledger would swallow the new rating.
+  function forgetRetryIds(uid, movieId) {
+    var prefix = uid + ":" + movieId + ":";
+    Object.keys(state.retryIds).forEach(function (k) { if (k.indexOf(prefix) === 0) delete state.retryIds[k]; });
+  }
+  function eventIdFor(uid, movieId, value) {
+    var key = retryKey(uid, movieId, value);
+    if (!state.retryIds[key]) state.retryIds[key] = crypto.randomUUID();
+    return state.retryIds[key];
+  }
+
   function rate(item, value, card, stars) {
-    var eventId = crypto.randomUUID();
+    var uid = state.account.userId;
+    var eventId = eventIdFor(uid, item.movieId, value);
     lock(card, true);
     preview(stars, value);
     setState(card, "Đang gửi đánh giá…", true);
@@ -435,6 +453,7 @@
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId: state.account.userId, movieId: item.movieId, rating: value, eventId: eventId })
     }).then(function (res) {
+      if (res.status === 202 || res.status === 422) forgetRetryIds(uid, item.movieId);   // final answer: next time is a new rating
       if (res.status !== 202) {
         toast("Chưa lưu được đánh giá. Vui lòng thử lại.", true);
         setState(card, "", false);

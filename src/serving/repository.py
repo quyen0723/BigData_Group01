@@ -11,6 +11,7 @@ from typing import Protocol
 
 from .config import MongoConfig
 from .models import HistorySnapshot
+from .timeutil import to_epoch
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class MongoServingRepository:
         # native datetime.datetime. HistorySnapshot.last_updated is epoch seconds
         # (matches src/serving/history.py's pure-Python representation), so convert.
         last_updated_raw = doc.get("lastUpdated")
-        last_updated = int(last_updated_raw.timestamp()) if last_updated_raw else None
+        last_updated = to_epoch(last_updated_raw) if last_updated_raw else None   # naive == UTC, not host-local
         return HistorySnapshot(
             interaction_count=doc["interaction_count"],
             recent_movie_ids=tuple(doc.get("recent_movieIds", [])),

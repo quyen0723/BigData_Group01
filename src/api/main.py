@@ -204,7 +204,12 @@ def submit_rating(
         raise HTTPException(status_code=503, detail=f"kafka producer error: {exc}") from exc
 
     if remaining > 0:
-        raise HTTPException(status_code=503, detail="kafka delivery timed out")
+        # The message is already in the producer queue and may still reach Kafka after this response
+        # (design D-6): the outcome is unknown, so a retry must carry the same eventId to be deduplicated.
+        raise HTTPException(
+            status_code=503,
+            detail="kafka delivery timed out; the rating may still be delivered, retry with the same eventId",
+        )
     if delivery.get("err") is not None:
         raise HTTPException(status_code=503, detail=f"kafka delivery failed: {delivery['err']}")
 

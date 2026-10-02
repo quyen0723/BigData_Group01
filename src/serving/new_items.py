@@ -12,6 +12,7 @@ from collections import Counter
 from typing import Iterable
 
 from .models import Candidate
+from .timeutil import as_utc
 
 NEW_SOURCE = "new"
 GENRE_SEPARATOR = "|"
@@ -33,9 +34,7 @@ def genre_profile(seed_genres: Iterable[str]) -> dict[str, float]:
 
 
 def _epoch(value: dt.datetime) -> float:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=dt.timezone.utc)
-    return value.timestamp()
+    return as_utc(value).timestamp()
 
 
 def score_new_movies(profile: dict[str, float], movies: Iterable[dict]) -> list[tuple[int, float]]:
@@ -59,23 +58,19 @@ def place_new_items(
     k: int,
 ) -> list[Candidate]:
     """Insert up to `slots` new movies starting at 1-based rank `position`, shifting the rest
-    down, and cut back to `k`. A placed item takes the fused score of the item it displaces so
-    the response scores stay in descending order (genre scores live on a different scale
-    from RRF scores). Movies already in `final` are skipped."""
+    down, and cut back to `k`. Every placed item takes the fused score of the FIRST item it displaces
+    (the last item's score when placing at the end) so the response scores never increase, for any
+    number of slots (genre scores live on a different scale from RRF scores). Movies already in
+    `final` are skipped."""
     present = {c.movie_id for c in final}
     to_place = [mid for mid in new_movie_ids if mid not in present][:slots]
     if not to_place:
         return final[:k]
 
     index = min(max(position, 1) - 1, len(final))
-    fallback_score = final[-1].score if final else 0.0
-    placed = [
-        Candidate(
-            movie_id=mid,
-            rank=0,
-            support=0,
-            score=final[index + offset].score if index + offset < len(final) else fallback_score,
-        )
-        for offset, mid in enumerate(to_place)
-    ]
+    if index < len(final):
+        placed_score = final[index].score
+    else:
+        placed_score = final[-1].score if final else 0.0
+    placed = [Candidate(movie_id=mid, rank=0, support=0, score=placed_score) for mid in to_place]
     return (final[:index] + placed + final[index:])[:k]

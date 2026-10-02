@@ -27,11 +27,14 @@ import sys
 from pymongo import MongoClient, UpdateOne
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType
+from pyspark.sql.types import (
+    DoubleType, IntegerType, LongType, StringType, StructField, StructType, TimestampType,
+)
 
 from loaders.spark_mongo import build_spark, load_serving_config, load_streaming_config, mongo_uri
 from serving.history import recompute_history
 from serving.models import RatedMovie
+from streaming.batch_guard import SKIP, decide_batch_action, read_stream_id
 
 EVENT_SCHEMA = StructType([
     StructField("eventId", StringType()),
@@ -91,7 +94,7 @@ def build_parsed_stream(spark: SparkSession, movies_df: DataFrame, paths: dict, 
             StructField("value", StringType()),
             StructField("kafkaPartition", IntegerType()),
             StructField("kafkaOffset", LongType()),
-            StructField("kafkaTimestamp", StringType()),
+            StructField("kafkaTimestamp", TimestampType()),   # Q1 writes Kafka's timestamp column as is
             StructField("ingest_date", StringType()),
         ])
     ).parquet(paths["raw_events"])
@@ -145,122 +148,146 @@ def make_serve_batch(paths: dict, hist_cfg: dict, db_name: str):
     positive_cap = int(hist_cfg["positive_cap"])
     positive_threshold = float(hist_cfg["positive_threshold"])
     curated_ratings_path = paths["curated_ratings"]
+    valid_checkpoint = paths["checkpoints"]["valid"]
+    stream_identity: dict = {}      # {"id": ...} once readable; the file only exists after the query started
+    warned: set = set()
+    mongo: dict = {}                # one MongoClient for the life of the query (design D-7)
+
+    def get_db():
+        # MongoClient is thread-safe, pools its connections and reconnects by itself; building a new one for
+        # every micro-batch (also the empty ones the watermark triggers) cost three fresh connections each time.
+        if "client" not in mongo:
+            mongo["client"] = MongoClient(mongo_uri(), serverSelectionTimeoutMS=10000)
+        return mongo["client"][db_name]
 
     def serve_batch(batch_df: DataFrame, batch_id: int) -> None:
-        client = MongoClient(mongo_uri(), serverSelectionTimeoutMS=10000)
-        db = client[db_name]
-        try:
-            state = db.pipeline_state.find_one({"_id": "ratings_stream"})
-            last_batch_id = state.get("lastBatchId", -1) if state else -1
-            if batch_id <= last_batch_id:
-                print(f"serve_batch[{batch_id}]: already committed (last={last_batch_id}), skipping")
-                return
+        db = get_db()
+        if "id" not in stream_identity:
+            found = read_stream_id(valid_checkpoint)
+            if found is not None:
+                stream_identity["id"] = found
+        stream_id = stream_identity.get("id")
 
-            rows = [r.asDict() for r in batch_df.select(
-                "eventId", "userId", "movieId", "rating", "timestamp"
-            ).collect()]
+        # Read the batch BEFORE deciding whether to skip it. Q2 has a state store (watermark dedup);
+        # it only advances when the batch plan runs. A skipped batch that was never read leaves a hole
+        # in the state files while Spark still commits the offset, and the next batch dies on a missing
+        # `N.delta` (observed after a lost checkpoint, design D-2).
+        rows = [r.asDict() for r in batch_df.select(
+            "eventId", "userId", "movieId", "rating", "timestamp"
+        ).collect()]
 
-            if rows:
-                event_ids = [r["eventId"] for r in rows]
-                existing_ids = {d["_id"] for d in db.rating_events.find(
-                    {"_id": {"$in": event_ids}}, {"_id": 1}
-                )}
-                new_rows = [r for r in rows if r["eventId"] not in existing_ids]
-            else:
-                new_rows = []
+        # Skip only when the checkpoint is the one that wrote lastBatchId (design D-2): a lost
+        # checkpoint restarts Spark's batch counter at 0 while Mongo still remembers a larger id.
+        state = db.pipeline_state.find_one({"_id": "ratings_stream"})
+        decision = decide_batch_action(state, batch_id, stream_id)
+        if decision.action == SKIP:
+            print(f"serve_batch[{batch_id}]: {decision.reason}")
+            return
+        if decision.warn and decision.reason not in warned:
+            warned.add(decision.reason)
+            print(f"serve_batch[{batch_id}]: WARNING {decision.reason}")
 
-            print(f"serve_batch[{batch_id}]: {len(rows)} row(s), {len(new_rows)} new after ledger dedup")
+        if rows:
+            event_ids = [r["eventId"] for r in rows]
+            existing_ids = {d["_id"] for d in db.rating_events.find(
+                {"_id": {"$in": event_ids}}, {"_id": 1}
+            )}
+            new_rows = [r for r in rows if r["eventId"] not in existing_ids]
+        else:
+            new_rows = []
 
-            if new_rows:
-                # 3. append curated_ratings — BATCH writer, never a streaming file sink.
-                spark = batch_df.sparkSession
-                curated_schema = StructType([
-                    StructField("userId", IntegerType()),
-                    StructField("movieId", IntegerType()),
-                    StructField("rating", DoubleType()),
-                    StructField("timestamp", LongType()),
-                ])
-                curated_rows = [
-                    (r["userId"], r["movieId"], r["rating"], r["timestamp"]) for r in new_rows
-                ]
-                curated_df = (
-                    spark.createDataFrame(curated_rows, schema=curated_schema)
-                    .withColumn("rating_ts", F.to_timestamp(F.from_unixtime(F.col("timestamp"))))
-                    .withColumn("year", F.year(F.col("rating_ts")))
-                )
-                curated_df.write.mode("append").partitionBy("year").parquet(curated_ratings_path)
+        print(f"serve_batch[{batch_id}]: {len(rows)} row(s), {len(new_rows)} new after ledger dedup")
 
-                # 4. upsert user_rated, latest-timestamp-wins (pipeline update).
-                rated_ops = [
-                    UpdateOne(
-                        {"userId": r["userId"], "movieId": r["movieId"]},
-                        [{"$set": {
-                            "rating": {"$cond": [
-                                {"$gte": [r["timestamp"], {"$ifNull": ["$ratingTs", -1]}]},
-                                r["rating"], "$rating",
-                            ]},
-                            "ratingTs": {"$cond": [
-                                {"$gte": [r["timestamp"], {"$ifNull": ["$ratingTs", -1]}]},
-                                r["timestamp"], "$ratingTs",
-                            ]},
-                        }}],
-                        upsert=True,
-                    )
-                    for r in new_rows
-                ]
-                db.user_rated.bulk_write(rated_ops, ordered=False)
-
-                # 5. recompute user_history for affected users (reuses
-                #    src/serving/history.recompute_history — same tested logic).
-                affected_users = sorted({r["userId"] for r in new_rows})
-                hist_ops = []
-                for uid in affected_users:
-                    rated_docs = db.user_rated.find(
-                        {"userId": uid}, {"movieId": 1, "rating": 1, "ratingTs": 1, "_id": 0}
-                    )
-                    rated = [RatedMovie(d["movieId"], d["rating"], d["ratingTs"]) for d in rated_docs]
-                    snap = recompute_history(rated, recent_cap, positive_cap, positive_threshold)
-                    last_updated = (
-                        dt.datetime.fromtimestamp(snap.last_updated, tz=dt.timezone.utc)
-                        if snap.last_updated else None
-                    )
-                    hist_ops.append(UpdateOne(
-                        {"userId": uid},
-                        {"$set": {
-                            "userId": uid,
-                            "interaction_count": snap.interaction_count,
-                            "recent_movieIds": list(snap.recent_movie_ids),
-                            "positive_movieIds": list(snap.positive_movie_ids),
-                            "lastUpdated": last_updated,
-                        }},
-                        upsert=True,
-                    ))
-                if hist_ops:
-                    db.user_history.bulk_write(hist_ops, ordered=False)
-
-                # 6. ledger insert (idempotency marker) — AFTER effects are applied,
-                #    so "in ledger" always means "already applied".
-                now = dt.datetime.now(dt.timezone.utc)
-                ledger_docs = [
-                    {"_id": r["eventId"], "userId": r["userId"], "movieId": r["movieId"],
-                     "rating": r["rating"], "timestamp": r["timestamp"], "batchId": batch_id, "ingestedAt": now}
-                    for r in new_rows
-                ]
-                try:
-                    db.rating_events.insert_many(ledger_docs, ordered=False)
-                except Exception as exc:  # noqa: BLE001 - duplicate key on replay is expected/fine
-                    if "E11000" not in str(exc):
-                        raise
-
-            # 7. commit batch id (always, even for an empty/all-duplicate batch).
-            db.pipeline_state.update_one(
-                {"_id": "ratings_stream"},
-                {"$set": {"lastBatchId": batch_id, "lastRunAt": dt.datetime.now(dt.timezone.utc)}},
-                upsert=True,
+        if new_rows:
+            # 3. append curated_ratings — BATCH writer, never a streaming file sink.
+            spark = batch_df.sparkSession
+            curated_schema = StructType([
+                StructField("userId", IntegerType()),
+                StructField("movieId", IntegerType()),
+                StructField("rating", DoubleType()),
+                StructField("timestamp", LongType()),
+            ])
+            curated_rows = [
+                (r["userId"], r["movieId"], r["rating"], r["timestamp"]) for r in new_rows
+            ]
+            curated_df = (
+                spark.createDataFrame(curated_rows, schema=curated_schema)
+                .withColumn("rating_ts", F.to_timestamp(F.from_unixtime(F.col("timestamp"))))
+                .withColumn("year", F.year(F.col("rating_ts")))
             )
-            print(f"serve_batch[{batch_id}]: committed")
-        finally:
-            client.close()
+            curated_df.write.mode("append").partitionBy("year").parquet(curated_ratings_path)
+
+            # 4. upsert user_rated, latest-timestamp-wins (pipeline update).
+            rated_ops = [
+                UpdateOne(
+                    {"userId": r["userId"], "movieId": r["movieId"]},
+                    [{"$set": {
+                        "rating": {"$cond": [
+                            {"$gte": [r["timestamp"], {"$ifNull": ["$ratingTs", -1]}]},
+                            r["rating"], "$rating",
+                        ]},
+                        "ratingTs": {"$cond": [
+                            {"$gte": [r["timestamp"], {"$ifNull": ["$ratingTs", -1]}]},
+                            r["timestamp"], "$ratingTs",
+                        ]},
+                    }}],
+                    upsert=True,
+                )
+                for r in new_rows
+            ]
+            db.user_rated.bulk_write(rated_ops, ordered=False)
+
+            # 5. recompute user_history for affected users (reuses
+            #    src/serving/history.recompute_history — same tested logic).
+            affected_users = sorted({r["userId"] for r in new_rows})
+            hist_ops = []
+            for uid in affected_users:
+                rated_docs = db.user_rated.find(
+                    {"userId": uid}, {"movieId": 1, "rating": 1, "ratingTs": 1, "_id": 0}
+                )
+                rated = [RatedMovie(d["movieId"], d["rating"], d["ratingTs"]) for d in rated_docs]
+                snap = recompute_history(rated, recent_cap, positive_cap, positive_threshold)
+                last_updated = (
+                    dt.datetime.fromtimestamp(snap.last_updated, tz=dt.timezone.utc)
+                    if snap.last_updated else None
+                )
+                hist_ops.append(UpdateOne(
+                    {"userId": uid},
+                    {"$set": {
+                        "userId": uid,
+                        "interaction_count": snap.interaction_count,
+                        "recent_movieIds": list(snap.recent_movie_ids),
+                        "positive_movieIds": list(snap.positive_movie_ids),
+                        "lastUpdated": last_updated,
+                    }},
+                    upsert=True,
+                ))
+            if hist_ops:
+                db.user_history.bulk_write(hist_ops, ordered=False)
+
+            # 6. ledger insert (idempotency marker) — AFTER effects are applied,
+            #    so "in ledger" always means "already applied".
+            now = dt.datetime.now(dt.timezone.utc)
+            ledger_docs = [
+                {"_id": r["eventId"], "userId": r["userId"], "movieId": r["movieId"],
+                 "rating": r["rating"], "timestamp": r["timestamp"], "batchId": batch_id, "ingestedAt": now}
+                for r in new_rows
+            ]
+            try:
+                db.rating_events.insert_many(ledger_docs, ordered=False)
+            except Exception as exc:  # noqa: BLE001 - duplicate key on replay is expected/fine
+                if "E11000" not in str(exc):
+                    raise
+
+        # 7. commit batch id (always, even for an empty/all-duplicate batch).
+        committed = {"lastBatchId": batch_id, "lastRunAt": dt.datetime.now(dt.timezone.utc)}
+        update = {"$set": committed}
+        if stream_id is not None:
+            committed["streamId"] = stream_id
+        else:
+            update["$unset"] = {"streamId": ""}     # lastBatchId and streamId must come from the same checkpoint
+        db.pipeline_state.update_one({"_id": "ratings_stream"}, update, upsert=True)
+        print(f"serve_batch[{batch_id}]: committed")
 
     return serve_batch
 

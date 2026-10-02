@@ -24,8 +24,10 @@ from pathlib import Path
 from pymongo import MongoClient
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.recommendation import ALSModel
+from pyspark.sql import functions as F
 
 from loaders.spark_mongo import build_spark, load_serving_config, load_streaming_config, mongo_uri
+from orchestration.gate_holdout import MISSING_CUT_TEST, resolve_cut_test
 
 
 def _rmse(spark, model_dir: str, holdout) -> float:
@@ -33,6 +35,14 @@ def _rmse(spark, model_dir: str, holdout) -> float:
     predictions = model.transform(holdout).na.drop(subset=["prediction"])
     evaluator = RegressionEvaluator(metricName="rmse", labelCol="rating", predictionCol="prediction")
     return evaluator.evaluate(predictions)
+
+
+def _latest_per_pair(holdout):
+    """One row per (userId, movieId): the rating with the greatest timestamp (design D-3).
+    serve_batch appends to curated_ratings at least once, so a replayed batch can leave the same
+    row twice; the original MovieLens data has no repeated pair, so for the historical holdout
+    this changes nothing."""
+    return holdout.groupBy("userId", "movieId").agg(F.max_by("rating", "timestamp").alias("rating"))
 
 
 def _semver_tuple(v: str) -> tuple[int, int, int]:
@@ -93,7 +103,7 @@ def main() -> int:
     # "Input path does not exist" otherwise).
     active_model_dir = f"{paths['models']}/als_{active_version}"
     candidate_model_dir = f"{candidate_reg['candidateDir']}/model"
-    cut_test = candidate_card.get("split", {}).get("cut_test") or active_card.get("split", {}).get("cut_test")
+    cut_test = resolve_cut_test(candidate_card, active_card)
     baseline_rmse = active_card.get("metrics", {}).get("rmse_movemean_test") \
         or candidate_card.get("metrics", {}).get("rmse_movemean_test")
     reported_candidate_rmse = candidate_card.get("metrics", {}).get("rmse_test")
@@ -105,18 +115,22 @@ def main() -> int:
     # partial, honest result is always produced.
     active_rmse = candidate_rmse = None
     rmse_error: str | None = None
-    spark = build_spark("movielens-promotion-gate")
-    try:
-        holdout = spark.read.parquet(paths["curated_ratings"])
-        if cut_test is not None:
-            holdout = holdout.filter(f"timestamp >= {float(cut_test)}")
+    if cut_test is None:
+        # Fail closed (design D-5): without the cut the holdout would be the whole dataset, training rows included.
+        rmse_error = MISSING_CUT_TEST
+    else:
+        spark = build_spark("movielens-promotion-gate")
+        try:
+            holdout = _latest_per_pair(
+                spark.read.parquet(paths["curated_ratings"]).filter(f"timestamp >= {float(cut_test)}")
+            )
 
-        active_rmse = _rmse(spark, active_model_dir, holdout)
-        candidate_rmse = _rmse(spark, candidate_model_dir, holdout)
-    except Exception as exc:  # noqa: BLE001 - any load/compute failure is a gate concern, not a crash
-        rmse_error = f"{type(exc).__name__}: {exc}"
-    finally:
-        spark.stop()
+            active_rmse = _rmse(spark, active_model_dir, holdout)
+            candidate_rmse = _rmse(spark, candidate_model_dir, holdout)
+        except Exception as exc:  # noqa: BLE001 - any load/compute failure is a gate concern, not a crash
+            rmse_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            spark.stop()
 
     epsilon = float(gate_cfg["epsilon_rmse"])
     band_lo, band_hi = gate_cfg["rmse_sanity_band"]
