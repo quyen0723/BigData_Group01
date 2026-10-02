@@ -217,7 +217,9 @@ Q2 valid   : parsed.filter(reason is null)
 
 ```
 serve_batch(df, batchId):
-  1. batchId ≤ pipeline_state.ratings_stream.lastBatchId      ⇒ return   (batch đã xử lý xong)
+  0. collect() batch trước (state store dedup chỉ tiến khi batch được đọc)
+  1. cùng streamId (danh tính checkpoint) VÀ batchId ≤ pipeline_state.ratings_stream.lastBatchId
+                                                              ⇒ return   (batch đã xử lý xong)
   2. loại event có eventId đã nằm trong rating_events              (dedup vượt watermark)
   3. df.write.mode("append").partitionBy("year").parquet(curated_ratings)   ← batch writer, KHÔNG file sink
      cột đúng §2.1: userId, movieId, rating, timestamp, rating_ts (+ year)
@@ -228,14 +230,15 @@ serve_batch(df, batchId):
                            rating < 4.0 thì loại khỏi positive
        lastUpdated = max(cũ, max event_time)
   6. insert rating_events {_id:eventId, …, batchId, ingestedAt}  (ordered=false, bỏ qua duplicate)
-  7. pipeline_state.ratings_stream.lastBatchId = batchId
+  7. pipeline_state.ratings_stream.{lastBatchId, lastRunAt, streamId} = batchId, now, id checkpoint
 ```
 
 **Lập luận idempotency**
 - Bước 4–5 idempotent theo thiết kế: tính lại count thay vì `$inc`; chạy lại chuỗi move-to-front cho cùng trạng thái cuối; `max` idempotent.
 - Ledger (bước 6) ghi **sau** khi đã áp dụng. Vì vậy event nằm trong ledger đồng nghĩa đã áp dụng xong, và bước 2 lọc bỏ là an toàn.
 - Nếu crash giữa bước 3 và 7, batch chạy lại có thể append Parquet **2 lần**. Curated không có `eventId`, nên xử lý bằng **quy tắc latest-wins theo `(userId, movieId)` khi đọc để retrain** (D4 với Person 1). Quy tắc này cũng giải quyết trường hợp user rate lại cùng phim.
-- Checkpoint của Q2 cùng `lastBatchId` đảm bảo restart không xử lý lại batch đã commit.
+- Append parquet **vẫn at-least-once** (Spark ghi file và Mongo không có commit nguyên tử chung; không đổi thứ tự bước 3 và 6, vì ghi ledger trước parquet sẽ biến "có thể trùng" thành "có thể mất mà không dấu vết"). Ba nơi trung hoà bản trùng, theo `address-person1-review-findings` D-3: (a) `delta_ratings` của handoff lấy từ **ledger** (mỗi `eventId` một dòng) nên không bao giờ trùng; (b) `promotion_gate` gộp holdout theo `(userId, movieId)` lấy `timestamp` lớn nhất trước khi tính RMSE; (c) phía retrain của Person 1 theo D4, chờ xác nhận. Đã đo: `curated_ratings` thật có 5 cặp `(userId, movieId)` lặp trong holdout từ các lần demo.
+- Checkpoint của Q2 cùng `lastBatchId` giúp restart không xử lý lại batch đã commit **chỉ khi checkpoint là cái đã ghi `lastBatchId`**: Spark đánh số batch theo checkpoint, còn Mongo bền hơn checkpoint. Vì vậy bước 1 so thêm `streamId` (id trong `<checkpoint>/metadata`); khác hoặc chưa ghi nhận thì xử lý batch, ledger dedup lo phần còn lại (`address-person1-review-findings` D-2). Bước 0 bắt buộc: skip một batch mà chưa đọc làm state store thiếu file `.delta` và query chết ở batch kế tiếp (đã gặp trên stack thật sau khi mất checkpoint).
 
 **Tại sao không dùng file sink cho curated**: file sink tạo `_spark_metadata/`. `DataSource.resolveRelation` (Spark 3.5) khi đó dùng `MetadataLogFileIndex`, chỉ liệt kê file của stream, nên 32M dòng lịch sử bị ẩn khỏi mọi batch read.
 

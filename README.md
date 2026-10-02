@@ -68,7 +68,15 @@ python scripts/bootstrap_stream_dirs.py        # fail-fasts if any required file
 #    same values for any host-side script/tool you point at the exposed ports)
 docker compose -f docker/docker-compose.yml up -d --build
 
-# 2. Load MongoDB serving store (idempotent — safe to rerun)
+# 2. Load MongoDB serving store ONCE, in this order, on a fresh store. Not a "rerun anytime" step:
+#    - build_movies replaces every movie by _id; build_user_state uses plain inserts (do not
+#      rerun it on a loaded store); load_artifacts deletes and reloads that version's documents;
+#    - bootstrap_registry (last line) is the first-load check. It refuses to replace an active
+#      pointer that names another version, and its exact document counts (movies, user_rated,
+#      user_history, popular_movies) stop matching once streaming has applied events or a second
+#      version was loaded, so a later rerun fails check G4 and writes nothing.
+#    To change the active version use orchestration.promotion_gate / manage_versions (step 5).
+#    To start over, empty the Mongo volume first.
 docker compose -f docker/docker-compose.yml exec spark python -m loaders.create_indexes
 docker compose -f docker/docker-compose.yml exec spark python -m loaders.build_movies
 docker compose -f docker/docker-compose.yml exec spark python -m loaders.build_user_state
@@ -76,7 +84,7 @@ docker compose -f docker/docker-compose.yml exec spark python -m loaders.load_ar
 docker compose -f docker/docker-compose.yml exec spark python -m loaders.load_artifacts --artifact similar  --version v1.0.0
 docker compose -f docker/docker-compose.yml exec spark python -m loaders.load_artifacts --artifact als_topn --version v1.0.0
 docker compose -f docker/docker-compose.yml exec spark python -m loaders.bootstrap_registry --version v1.0.0
-# expected: 7/7 gate checks PASS, "v1.0.0 is now the active serving version"
+# expected on a fresh store: 7/7 gate checks PASS, "v1.0.0 is now the active serving version"
 
 # 3. Try the API (host port 8088 — not 8000, which Windows dev tools like Laragon often occupy)
 curl http://127.0.0.1:8088/recommendations/1?k=5
@@ -108,7 +116,7 @@ docker compose -f docker/docker-compose.yml exec spark python -m orchestration.m
 **Tests** (no Docker needed — pure Python + a fake in-memory repository):
 ```bash
 python -m venv .venv-serving && .venv-serving/Scripts/pip install -r configs/requirements_serving.txt pytest
-.venv-serving/Scripts/python -m pytest tests/ -v   # 67 tests
+.venv-serving/Scripts/python -m pytest tests/ -v   # 163 tests
 ```
 
 **Evidence** for every step above is in `evidence/p2_*` (counts, gate reports, test matrix,

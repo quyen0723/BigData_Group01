@@ -74,6 +74,14 @@ Từ change `add-demo-web-client`, có thêm 4 route: `POST /ratings`,
 `GET /debug/system`, `POST /movies`, `DELETE /movies/{movieId}`, `GET /app`,
 `GET /admin`, `GET /users/{userId}/ratings`.
 
+**Hợp đồng của `POST /ratings`.** `202` nghĩa là Kafka đã nhận, chưa phải đã áp dụng
+(hỏi `GET /ratings/{eventId}`). `503` kèm `kafka delivery timed out` nghĩa là
+**kết quả chưa biết**: tin nhắn đã nằm trong hàng đợi của producer và vẫn có thể tới
+Kafka sau phản hồi. Muốn thử lại an toàn, gửi lại **cùng `eventId`**; ledger gộp các bản
+gửi thành một. `eventId` là tuỳ chọn, nhưng khi bỏ trống server sinh UUID mới cho
+mỗi request, nên thử lại sẽ thành một đánh giá khác. Trang `/app` giữ `eventId` cho lần
+thử lại cùng một đánh giá (cùng user, phim và số sao) và đổi id sau khi nhận `202`.
+
 ---
 
 ## 2b. Demo bằng giao diện (khuyên dùng cho buổi thuyết trình)
@@ -384,6 +392,38 @@ db = MongoClient('mongodb://mongo:27017')['movielens']
 print(db.serving_meta.find_one({'_id':'active'}))
 "
 ```
+
+---
+
+## 9b. Flow test H — mất checkpoint của streaming (đường lỗi)
+
+Kiểm tra rằng mất thư mục checkpoint trong khi Mongo còn nguyên **không** làm rating mới bị bỏ qua
+(`address-person1-review-findings` D-2). Chỉ làm trên môi trường demo.
+
+```powershell
+docker compose -f docker/docker-compose.yml stop streaming
+Move-Item movielens32m\stream\checkpoints\valid movielens32m\stream\checkpoints\valid.bak
+docker compose -f docker/docker-compose.yml start streaming
+docker compose -f docker/docker-compose.yml logs --since 2m streaming
+```
+
+Kỳ vọng trong log (sau khoảng 30–60 giây):
+- `serve_batch[0]: WARNING checkpoint changed (recorded <id cũ>, running <id mới>): lastBatchId=N no longer applies`
+- `serve_batch[0]: 4x row(s), 0 new after ledger dedup`: phát lại toàn bộ `raw_events` không ghi thêm gì (ledger dedup).
+
+Rồi gửi một rating bằng `/app` hoặc `POST /ratings`: `GET /ratings/{eventId}` phải thành `applied` sau 12–45 giây.
+Xong thì xoá `valid.bak`. Với code trước khi sửa, rating này kẹt `pending`, log ghi
+`already committed (last=N), skipping`, và batch kế tiếp làm query chết vì thiếu file `.delta` (xem
+`evidence/p2_review_fixes.txt` mục 3).
+
+## 9c. Flow test I — handoff khi streaming đang ghi (đường lỗi)
+
+`retrain_trigger` chỉ xuất event của batch **đã commit** (`ingestedAt` trong `(watermark, lastRunAt]`) và
+đặt watermark mới bằng đúng cận trên đó, nên một batch đang ghi dở không bị cắt đôi hay rơi khỏi cả hai gói
+(`address-person1-review-findings` D-1). Logic có unit test (`tests/unit/test_handoff_window.py`); kịch bản chạy
+thật (đặt `lastRunAt`, chèn hai event ledger tổng hợp trước và sau `lastRunAt`, chạy `retrain_trigger --force` hai lần)
+và kết quả đo nằm ở `evidence/p2_review_fixes.txt` mục 2. Kịch bản đó sửa `pipeline_state` và `rating_events`,
+nên **phải khôi phục** chúng sau khi thử.
 
 ---
 

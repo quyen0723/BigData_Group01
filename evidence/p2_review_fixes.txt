@@ -1,0 +1,235 @@
+P2 — FIXES FOR THE PERSON 1 CROSS-REVIEW OF PR #1 (change: address-person1-review-findings)
+Date: 2026-10-02. Branch: feat/person2-serving-streaming-integration. Source of findings: PR #1 comment by quyen0723
+and docs/REVIEW_person2_branch.md (PR #2). Every finding was first checked against the code (line numbers match).
+
+INDEX
+  B1  retrain_trigger.py watermark            (design D-1)   section 2
+  B3  pipeline.py batchId guard               (design D-2)   section 3
+  B2  promotion_gate.py duplicate holdout     (design D-3)   section 4
+  M1  promotion_gate.py missing cut_test      (design D-5)   section 4
+  B4  bootstrap_registry.py pointer overwrite (design D-4)   section 5
+  M2  POST /ratings timeout contract          (design D-6)   section 6
+  low new_items scores, kafkaTimestamp, to_epoch, MongoClient reuse (design D-7)   section 7
+
+=== 1. BASELINE (task 1.1 - 1.3) ===
+unit tests before any change: 124 passed (.venv-serving python -m pytest tests/ -q)
+stack: api, kafka, mongo, mongo-express, spark healthy; streaming healthy (restarted ~1 h earlier)
+
+state snapshot taken before the experiments (restored afterwards; copy kept in the session scratchpad):
+  pipeline_state.ratings_stream   lastBatchId=69  lastRunAt=2026-10-01T06:56:35.224Z   (no streamId field yet)
+  pipeline_state.retrain_handoff  watermark=2026-09-26T15:53:25.815Z
+  pipeline_state.demo_movie_seq   seq=9000005
+  rating_events=46  user_rated=32,000,245  user_history=200,960
+  serving_meta.active=v1.0.0 (previousVersion null)  model_registry: v1.0.0 active, v1.1.0 rejected
+  handoff directories: movielens32m/stream/handoff/81cb2777-d3c8-4f7d-93b7-d2f3fae5da26
+
+=== 2. B1 - HANDOFF WINDOW BOUNDED BY COMMITTED EVENTS (design D-1) ===
+BEFORE (code reading, not executed): retrain_trigger.py queried `ingestedAt > watermark` with no upper bound (old line 51), took
+`now` at old line 97 and wrote `watermark = now` at old line 117. An event applied between the query and the watermark write has
+ingestedAt in (query time, now): it is in neither this package nor the next one. The Spark write sits in that gap.
+NOTE ON THE REVIEW: it says maxEventTimestamp is "computed but unused". It is used (manifest + checksum) and it is the rating's own
+timestamp, not ingestedAt, so it must not become the watermark. Review also proposes watermark = max(ingestedAt of pending); that
+still loses the rest of a batch whose insert_many is half done (one ingestedAt per batch), hence the lastRunAt bound.
+
+AFTER: window = (watermark, lastRunAt of the last committed batch]; new watermark = that bound; manifest windowEnd = that bound.
+unit tests: tests/unit/test_handoff_window.py 8 passed (full suite 132 passed)
+
+LIVE CHECK on the running stack (movielens-spark, python -m orchestration.retrain_trigger --force), synthetic ledger events:
+  setup: watermark=2026-10-02T08:00:00Z (after every real event), ratings_stream.lastRunAt = T = 2026-10-02T09:00:00Z
+         review-fix-a ingestedAt = T-1s  (batch committed)       review-fix-b ingestedAt = T+5s (batch still being written)
+  (a) run 1: window (08:00:00, 09:00:00], rowCount=1, maxEventTimestamp=1790000000 (= review-fix-a), windowEnd=09:00:00,
+             watermark -> 2026-10-02T09:00:00Z.  review-fix-b NOT exported.
+  (b) batch 2 commits (lastRunAt = T+10s), run 2: window (09:00:00, 09:00:10], rowCount=1, maxEventTimestamp=1790000001
+             (= review-fix-b), watermark -> 09:00:10Z.   => a and b each exported exactly once, nothing lost between the two runs.
+  (c) run 3 immediately: window (09:00:10, 09:00:10], 0 events -> "nothing to hand off".
+  (d) ratings_stream document deleted: "no committed micro-batch recorded in pipeline_state.ratings_stream: nothing to hand off",
+      no package created.
+  first attempt of (a) failed with PySpark "DoubleType can not accept object 4 in type int": my synthetic events stored rating as
+  int32 through mongosh. Test-data artifact, real ledger documents hold doubles. Fixed the data, not the code.
+CLEANUP: synthetic events deleted, pipeline_state restored to the section-1 snapshot (verified field by field, rating_events=46),
+  the three handoff directories created by this test removed (81cb2777-... from before the change was kept).
+
+=== 3. B3 - BATCH GUARD BOUND TO THE CHECKPOINT (design D-2) ===
+BEFORE (old code, reproduced on the running stack, task 3.1):
+  1. docker compose stop streaming; mv movielens32m/stream/checkpoints/valid valid.bak  (Q2 checkpoint lost, Mongo untouched:
+     pipeline_state.ratings_stream.lastBatchId = 69); docker compose start streaming.
+  2. Spark created a new checkpoint (metadata id 89fe5d54-... -> c044a59b-...) and numbered batches from 0 again. Log:
+       serve_batch[0]: already committed (last=69), skipping     <- the whole replay of raw_events, harmless (already in the ledger)
+  3. POST /ratings {userId 999100001, movieId 296, rating 4.0, eventId review-fix-b3-before} -> 202 accepted.
+     GET /ratings/review-fix-b3-before polled for 112 s: status "pending" every time (batchId null, ingestedAt null). Log:
+       serve_batch[1]: already committed (last=69), skipping     <- the new rating is dropped, the log looks healthy
+     => the guard compares Spark's per-checkpoint counter with Mongo's durable lastBatchId; every batch with id <= 69 is skipped,
+        i.e. about the next 69 batches that carry data. (The review says "permanently"; it is bounded, but the effect for a user is
+        the same: 202, then "pending" forever, nothing in the logs says that data was dropped.)
+  The rating review-fix-b3-before is lost by this experiment (it is a synthetic rating of user 999100001; it is not in the ledger).
+  WORSE THAN THE REVIEW SAYS (found while testing the fix, same experiment): the old guard `return`s without touching batch_df. Q2
+  has a state store (dropDuplicatesWithinWatermark) that only advances when the batch plan runs, so the skipped batches 0 and 1 left
+  no state files but Spark still committed their offsets. Checkpoint left behind by the repro:
+       offsets 0,1,2   commits 0,1   state/0/0/ = only "_metadata" (no N.delta)
+  The next batch that was actually processed (batch 2, after I restarted the container on the new code) failed with
+       java.io.FileNotFoundException: .../checkpoints/valid/state/0/0/1.delta does not exist
+  Query c044a59b terminated with error, container restarted 3 times and kept crash-looping (restart: unless-stopped).
+  So with the old guard a lost checkpoint is not only "ratings dropped for ~69 batches": it ends in a corrupt checkpoint and a crash loop.
+  Fix therefore has two parts: (1) skip only when the checkpoint identity matches, (2) read the batch before deciding to skip.
+
+AFTER (new code, same stack; tasks 3.5 - 3.7). Timeline from `docker logs -t movielens-streaming` and Mongo:
+  [migration] state written by the old code (lastBatchId=69, no streamId), checkpoint replaced because the repro one was corrupt
+     15:51:34 serve_batch[0]: WARNING no recorded stream identity (lastBatchId=69), processing batch
+     15:51:34 serve_batch[0]: 46 row(s), 2 new after ledger dedup       <- the 2 ratings the old guard had thrown away
+              (review-fix-b3-before and review-fix-b3-after-1) are applied now; GET /ratings/... -> applied, batchId 0
+     state: lastBatchId=1 streamId=7f42b323-...  (identity recorded at commit); state/0/0 now has 1.delta, 2.delta ...
+  [3.5] checkpoint lost again, this time with the identity recorded in Mongo
+     15:53:07 serve_batch[0]: WARNING checkpoint changed (recorded 7f42b323-..., running 6ed0a330-...): lastBatchId=1 no longer applies
+     15:53:07 serve_batch[0]: 46 row(s), 0 new after ledger dedup       <- replay of every raw event writes nothing (no duplicates)
+     15:53:14 serve_batch[1]: 1 row(s), 1 new after ledger dedup        <- the new rating review-fix-b3-after-2: old code would skip it
+              (1 <= lastBatchId=1); now GET /ratings/... -> applied after ~60 s, batchId 1
+     ledger 46 -> 49 (exactly the three test ratings), no duplicate documents (ledger _id is the eventId).
+  [3.6] docker compose restart streaming, checkpoint intact: no warning, review-fix-b3-restart applied after ~36 s (batch 3),
+     streamId unchanged.
+  [3.7] lastBatchId forced to 1000 with the matching streamId: batches 5, 6, 7, 8 -> "already committed (last=1000), skipping"
+     (two test ratings review-fix-b3-skip-1/-2 stay "pending" on purpose: that is what a skipped batch means). The query kept running:
+     RestartCount 0, no FileNotFoundException, state/0/0 kept growing (6.delta .. 9.delta) because the batch is read before the skip.
+     lastBatchId restored to 8: review-fix-b3-resume applied after ~24 s (batch 9).
+  unit tests: tests/unit/test_batch_guard.py 9 passed; full suite 141 passed.
+
+LEFT BEHIND BY THESE EXPERIMENTS (not removed, because serve_batch also appended them to the curated_ratings parquet, and deleting only
+the Mongo side would make the stores disagree):
+  synthetic users 999100001 .. 999100007 with one rating of movie 296 each (5 applied: ledger 46 -> 51; review-fix-b3-skip-1/-2 were skipped on
+  purpose and exist only in raw_events). 5 extra rows in curated_ratings (year 2026 partition). Purge before Quyen's retrain if wanted.
+  movielens32m/stream/checkpoints/valid.bak = the original healthy Q2 checkpoint from before the experiments (2.1 MB), safe to delete.
+
+=== 4. B2 + M1 - PROMOTION GATE (design D-3, D-5) ===
+B2 (holdout deduplicated). promotion_gate._latest_per_pair: groupBy(userId, movieId).agg(max_by(rating, timestamp)) after the
+timestamp >= cut_test filter. Checked on Spark inside movielens-spark with a tiny ALS model (rank 3, 40 users x 12 movies, 60-pair holdout):
+  1. unique pairs:        rmse without dedup 1.756285272537, with dedup 1.756285272537, diff 0.00e+00     (historical holdout: no change)
+  2. five rows duplicated: rmse without dedup 1.815024148176 (moves by 5.87e-02), with dedup 1.756285272537 (diff vs unique 0.00e+00)
+  3. re-rated pair keeps the later rating: with dedup 1.765108451403 = rmse of the set with that row replaced 1.765108451403 (diff 0.00e+00)
+  4. real holdout, READ ONLY (timestamp >= 1573258563): 4,801,911 rows -> 4,801,906 after grouping, i.e. 5 repeated (userId, movieId) pairs
+     already sit in curated_ratings (re-rates and replays from earlier demos). Count 11.5-17.2 s, count after grouping 17.9-24.0 s
+     (about 7 s extra on 4.8M rows).  The original 4,801,860 test rows are unique pairs, so the number Quyen reports is unchanged.
+  Not reproduced: a real crash between the parquet append and the ledger insert (reasoned from the code and design D-10, like the review).
+M1 (fail closed): unit tests tests/unit/test_gate_holdout.py 7 passed (full suite 148 passed). Live run: see 4.6 below.
+M1 live run (task 4.6): staged a throw-away registry entry v1.9.0 (modelCard {}), temporarily removed modelCard.split.cut_test from the active
+v1.0.0 card, ran `python -m orchestration.promotion_gate --version v1.9.0` in movielens-spark:
+  [PASS] G7 version numbering
+  [FAIL] G1 / G2 / G3: RMSE computation failed: no split.cut_test in either model card; refusing to evaluate on the full curated ratings
+  [FAIL] G4 (candidate has 0 staged docs)  [PASS] G5  [FAIL] G6 (candidate=0 active=154,608)
+  "FAIL - v1.9.0 rejected. serving_meta unchanged, v1.0.0 keeps serving."  exit code 1. No Spark session was started for RMSE and no model was
+  loaded. Report written: evidence/p2_review_fixes_gate_missing_cut_report.json (renamed from p2_6_2_promotion_fail_v1.9.0.json, v1.9.0 is a
+  throw-away version id).  Before the fix the same input skipped the filter and evaluated both models on all 32M curated rows.
+RESTORED: cut_test put back ("1573258563.0", string as stored), v1.9.0 deleted. model_registry v1.0.0 document and serving_meta.active compared
+against the backup taken before the test: identical; registry still has 2 documents.
+
+=== 5. B4 - BOOTSTRAP DOES NOT REPLACE AN ACTIVE POINTER (design D-4) ===
+THE REVIEW'S SCENARIO TODAY (before the fix, by the live counts, not executed): rerunning bootstrap_registry would have been stopped by its own
+exact document counts, not by a deliberate guard.  Live counts at the time: popular_movies 2 (expects 1), user_history 200,965 (expects 200,948),
+user_rated 32,000,250 (expects 32,000,204). So "rerun after promotion = rollback without a gate" does not happen today; what is true is that
+README promised "idempotent - safe to rerun" (false: the run is refused by G4) and the protection was accidental.
+AFTER: active_pointer_conflict() in bootstrap_registry.py; unit tests tests/unit/test_bootstrap_guard.py 4 passed.
+LIVE (movielens-spark), snapshot of model_registry + serving_meta.active compared as text before and after each run:
+  (a) --version v9.9.9 while v1.0.0 is active: "REFUSED: v1.0.0 is already the active serving version; refusing to replace it with v9.9.9.
+      Change the active version with orchestration.promotion_gate (new version) or orchestration.manage_versions (rollback)..." exit 2,
+      no checks run, Mongo unchanged: YES
+  (b) --version v1.0.0 (the active one): allowed to run, fails its own G4 counts (popular_movies 2/1, user_history, user_rated) and
+      "G5 no already-rated in user_recommendations: 7 leaked" (demo users rated movies that sit in their precomputed ALS lists),
+      "Bootstrap gate FAILED - serving_meta NOT written", exit 1, Mongo unchanged: YES. G5 takes several minutes on this store (full $lookup).
+README step 2 rewritten from "idempotent - safe to rerun" to what each loader really does (read from the code: build_movies replaces by _id,
+build_user_state uses plain inserts, load_artifacts delete_many + insert of that version, bootstrap_registry first-load check).
+
+=== 6. M2 - POST /ratings TIMEOUT CONTRACT (design D-6) ===
+REVIEW POINT CONFIRMED (main.py old line 200-207): flush() returned with the message still queued -> 503 "delivery timed out", yet librdkafka may
+still deliver it. A client that retries with a freshly generated id would then apply the rating twice. Effect on stored state is limited:
+user_rated is an upsert keyed by (userId, movieId), so only curated_ratings gets one more row, which section 4 neutralises at read time.
+AFTER: 503 detail = "kafka delivery timed out; the rating may still be delivered, retry with the same eventId" (eventId stays optional).
+  unit tests (tests/unit/test_ratings_api.py, 2 new, file 14 passed; full suite 154 passed): detail text; a retry after a timeout publishes the
+  same eventId again and returns 202 with it.
+  api restarted (docker compose restart api) to load the new message.
+BROWSER CHECK on /app (persona An, user 700008), window.fetch replaced so nothing reached the server: POST #1 answered 503, POST #2 (same star
+  clicked again) answered 202, status polling answered "applied", POST #3 (same movie and stars again):
+      eventIds sent: 48a53983..., 48a53983..., d74b2013...
+      => retry after the 503 re-sent the SAME eventId; the next rating after a 202 got a NEW one. Card unlocked after the 503 (stars enabled).
+
+=== 7. SMALL CLEAN-UPS (design D-7) ===
+7.1 new_items.place_new_items (review finding 9). Test written first and failed on the old code with scores [0.9, 0.8, 0.7, 0.8, 0.7] (final
+    [0.9,0.8,0.7], 2 slots at rank 2). Now every placed item takes the score of the first item it displaces: [0.9, 0.8, 0.8, 0.8, 0.7], never
+    increasing. 4 new tests in tests/unit/test_new_items.py (two slots, end of list, one slot unchanged, empty list). slots=1 output unchanged.
+7.2 kafkaTimestamp (finding 8). build_parsed_stream now declares TimestampType. Checked on the real raw_events files in movielens-spark:
+      schema StringType    -> read FAILS ("An error occurred while calling o50.collectToPython")   <- the latent trap, nothing selects the column today
+      schema TimestampType -> reads fine ['2026-09-26 15:42:45.765000', ...]
+    End to end after the restart: review-fix-conn-after applied after ~40 s (batch 13), RestartCount 0.
+7.3 to_epoch (finding 5). src/serving/timeutil.py (as_utc, to_epoch), used by repository.get_user_history, new_items._epoch and retrain_trigger.
+    On this Windows host (UTC+7) the old bare naive.timestamp() is 25,200 s (7 h) off from the UTC reading; the containers run in UTC, which is why
+    it never showed. tests/unit/test_timeutil.py 5 tests (independent expected value from calendar.timegm). Full suite 163 passed.
+7.4 MongoClient reuse (finding 10). Connections accepted by mongod from the streaming container's IP, split by driver (client metadata in the mongod log):
+                                      PyMongo (serve_batch)    Java/Spark connector (movies re-read, untouched)
+      OLD  batch 11 (1 row)                    3                          4
+      OLD  batch 12 (empty)                    3                          0
+      NEW  batch 13 (1 row, first after restart) 3 (the one client)       -
+      NEW  batch 14 (empty)                    0                          3
+    => PyMongo connections per micro-batch: 3 every batch before, 3 once per process now. With no traffic the stream runs no batches at all
+    (0 connections in the idle windows measured, last batch 2026-10-01 before the test), so the review's "about 17K clients a day with an idle 5 s
+    batch" overstates it: the cost is per batch that actually runs (data batch plus the trailing watermark batch).
+    The client is created lazily inside the closure; the per-batch client.close() is gone, the try/finally body dedented.
+
+=== 8. SUMMARY OF THE 10 FINDINGS ===
+ #   finding (review)                         my check against the code                                  fix                                  evidence
+ B1  watermark = now, black hole              CONFIRMED (query/now/watermark lines 51/97/117). Review's    window (watermark, lastRunAt of the  section 2: unit tests 8 + live
+                                              side remarks inaccurate: maxEventTimestamp IS used and is    last committed batch]; watermark =   run on movielens-spark
+                                              the rating time; max(ingestedAt) fix still leaks a batch     that bound
+                                              half inserted
+ B2  curated parquet append not idempotent    CONFIRMED but already documented (design D-10: append can    keep at-least-once; gate dedups the  section 4: Spark check + real
+                                              run twice, latest-wins on read, D4 pending with Person 1).   holdout per (userId, movieId);       holdout has 5 repeated pairs
+                                              delta_ratings comes from the ledger so it cannot repeat     D-10 text updated; D4 still open
+ B3  batchId guard vs checkpoint              CONFIRMED and WORSE: skipped batches never read leave        skip only with matching stream id;   section 3: before/after on the
+                                              holes in the dedup state store -> corrupt checkpoint,        batch is read before the decision    live stack, 9 unit tests
+                                              next batch crashes, crash loop. Not "permanent": bounded
+                                              by lastBatchId; log says "already committed ... skipping"
+ B4  bootstrap overwrites active pointer      TRUE IN CODE, NOT REACHABLE TODAY: exact document counts     refuse a different active version;  section 5: live runs (a)(b),
+                                              (popular_movies 2 vs 1 ...) stop a rerun; README claim       README step 2 rewritten from the     4 unit tests
+                                              "safe to rerun" was wrong                                    code of each loader
+ M1  gate fail-open without cut_test          CONFIRMED (real cards have it, so only broken cards)         G1-G3 FAIL, no model loaded          section 4: 7 unit tests + live run
+ M2  503 does not mean not delivered          CONFIRMED; effect limited to one extra curated row           503 text, eventId reuse in /app      section 6: 2 unit tests + browser
+ 8   kafkaTimestamp StringType vs INT96       CONFIRMED latent (read fails when the column is selected)    TimestampType                        section 7.2
+ 5   naive datetime .timestamp()              CONFIRMED (7 h off on this UTC+7 host, containers are UTC)   shared to_epoch                       section 7.3, 5 unit tests
+ 9   scores not descending with slots > 1     CONFIRMED (test failed on old code)                          one score for all placed items       section 7.1, 4 unit tests
+ 10  MongoClient per micro-batch              CONFIRMED (3 PyMongo connections per batch); the "17K a      one client per process               section 7.4
+                                              day" figure is too high, an idle stream runs no batches
+
+UNIT TESTS: 124 before -> 163 after (39 new, 0 failed): handoff_window 8, batch_guard 9, gate_holdout 7, bootstrap_guard 4, timeutil 5,
+  ratings_api 2, new_items 4.   Files changed: src/{orchestration,streaming,serving,loaders,api}, README, docs/TESTING_GUIDE.md,
+  design D-10 of person2-serving-streaming-integration. New change folder: openspec/changes/address-person1-review-findings/.
+
+NOT VERIFIED / LIMITS
+  - A real crash between the parquet append and the ledger insert (B2) and a real Docker Desktop restart were not reproduced; B2 is reasoned from
+    the code and design D-10, and the duplicate rows already in curated_ratings come from earlier demo activity, not from a crash.
+  - The handoff test used synthetic ledger events written through mongosh, not a handoff racing a live batch.
+  - Open questions for Quyen are unchanged: D4 (does the retrain read dedupe latest-wins; trains from delta or from curated) and D3 (holdout
+    timestamp >= cut_test grows with streamed events while delta sits in the same window).
+  - Leftovers from the experiments are listed at the end of section 3 (synthetic users 999100001..9, five-plus rows in curated_ratings, the
+    healthy old checkpoint movielens32m/stream/checkpoints/valid.bak).
+
+FINAL STATE OF THE LEFTOVERS (counted at the end of the change; supersedes the figures in section 3, which were taken earlier):
+  rating_events 53 = 46 existing + 7 synthetic applied events (review-fix-b3-before, -after-1, -after-2, -restart, -resume, review-fix-conn-before,
+  review-fix-conn-after). user_rated holds 7 rows for synthetic users 999100001, 999100002, 999100003, 999100004, 999100007, 999100008, 999100009.
+  review-fix-b3-skip-1 / -2 (users 999100005, 999100006) were skipped on purpose in the 3.7 test, so they exist only in raw_events.
+  curated_ratings has the same 7 rows appended (year 2026 partition). They are demo-sized noise; purge before Quyen's retrain if wanted.
+
+=== 9. INDEPENDENT REVIEW OF THESE FIXES (code-reviewer agent, read-only, separate from the author) ===
+Verdict: APPROVE WITH FIXES. It re-ran the suite (163 passed), traced serve_batch after the dedent, the guard truth table against the spec, the handoff
+window boundaries, the gate's early-failure path and the app retry ids. Findings and what was done:
+  - SHOULD-FIX app.html: a retry id kept at one star value could be reused later and be swallowed by the ledger (4 stars -> 503 keeps E1; 5 stars -> 202;
+    4 stars again reused E1, the API answered 202, the ledger already had E1, the new rating was dropped and the UI said "applied").
+    FIXED: a 202/422 now clears every retained id of that (user, movie); spec rating-ingestion-api updated with the scenario.
+    Browser check (fetch mocked, nothing reached the server): eventIds sent 374391f5 (4 stars, 503), 4b7b42c6 (5 stars, 202), 77025224 (4 stars again)
+    => the third request got a NEW id, not 374391f5.
+  - SHOULD-FIX promotion_gate: float(cut_test) had moved outside the guarded block, so an unparseable cut ("n/a") would raise before any report was written.
+    FIXED: gate_holdout._cut_of treats an unusable value as missing; 1 new test (n/a, "", list, dict; falls back to the other card).
+  - NIT pipeline.py step 7: with an unreadable checkpoint identity lastBatchId was overwritten while an old streamId stayed behind.
+    FIXED: the commit $unset-s streamId in that case. Live check after restarting streaming: review-fix-final-check applied after ~42 s (batch 15),
+    state {lastBatchId 15, streamId 6ed0a330-...}, RestartCount 0.
+  - BLOCKER configs/serving.yaml demo_enabled: true. Not part of this change: it is the local demo setting that was already modified and uncommitted before
+    the session started (the committed value is false since 421d088). Left as is on purpose and MUST NOT be committed: use `git add` by path.
+Unit tests now: 164 passed (163 + the unparseable-cut test). openspec validate --strict: valid.
+Gaps the reviewer noted and I agree with: _latest_per_pair has no automated test (needs Spark; covered by section 4's live check), and the handoff unit
+test mirrors retrain_trigger's flow through in_window rather than running the script (the live run in section 2 covers the watermark write).
+Leftovers: one more synthetic event, review-fix-final-check (user 999100010), applied during the final check: ledger 54, 8 synthetic rows in total.
