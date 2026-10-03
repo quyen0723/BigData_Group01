@@ -1,4 +1,4 @@
-import { ClipboardList, Clapperboard, Cpu, FlaskConical, LayoutDashboard, Users, type LucideIcon } from 'lucide-react'
+import { ClipboardList, Clapperboard, Cpu, FlaskConical, LayoutDashboard, TrendingUp, Users, type LucideIcon } from 'lucide-react'
 import { useEffect } from 'react'
 import { useSystemStatus } from '@/shared/hooks/queries'
 import {
@@ -19,10 +19,11 @@ import {
 import { SkipLink } from '@/shared/ui/skip-link'
 import { siblingPage } from '@/shared/lib/pages'
 import { Cases } from './Cases'
-import { DemoMovies } from './DemoMovies'
 import { LogSection } from './LogSection'
 import { ModelPanel } from './ModelPanel'
+import { MoviesSection } from './MoviesSection'
 import { Overview } from './Overview'
+import { Popularity } from './Popularity'
 import { hrefFor, SECTION_TITLES, SECTIONS, useRoute, type Section } from './route'
 import { UsersSection } from './UsersSection'
 
@@ -31,6 +32,7 @@ const ICONS: Record<Section, LucideIcon> = {
   cases: FlaskConical,
   users: Users,
   movies: Clapperboard,
+  popularity: TrendingUp,
   models: Cpu,
   log: ClipboardList,
 }
@@ -44,7 +46,7 @@ function CloseDrawerOnNavigate({ section }: { section: Section }) {
   return null
 }
 
-/** The admin frame (design D-7): a sidebar with the six sections, a header with the serving model and a link to the user
+/** The admin frame (design D-7): a sidebar with the seven sections, a header with the serving model and a link to the user
  *  page, and the section picked by the URL hash. Below 1024 px the sidebar is a drawer. */
 export function AdminShell() {
   const route = useRoute()
@@ -111,7 +113,8 @@ export function AdminShell() {
           {route.section === 'overview' && <Overview />}
           {route.section === 'cases' && <Cases />}
           {route.section === 'users' && <UsersSection userId={route.userId} />}
-          {route.section === 'movies' && <DemoMovies />}
+          {route.section === 'movies' && <MoviesSection />}
+          {route.section === 'popularity' && <Popularity />}
           {route.section === 'models' && <ModelPanel />}
           {route.section === 'log' && <LogSection />}
         </main>

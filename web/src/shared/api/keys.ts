@@ -9,6 +9,10 @@ export const keys = {
   /** The admin page's recommendations: the list plus how long the call took. */
   adminRecs: (userId: number) => ['adminRecs', userId] as const,
   health: ['health'] as const,
+  /** One page of the movie catalog for a given search. */
+  movies: (params: object) => ['movies', params] as const,
+  /** The popular list with its numbers; `m` null = the configured value. */
+  popularity: (m: number | null) => ['popularity', m] as const,
   system: ['system'] as const,
   ratingStatus: (eventId: string) => ['ratingStatus', eventId] as const,
 }

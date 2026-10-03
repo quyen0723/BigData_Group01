@@ -111,7 +111,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Movies
+         * @description specs/movie-catalog/spec.md "Movie list and search endpoint": demo-only (404 before any parameter is checked). The average rating and
+         *     WR are the training-split numbers plus the ratings applied since, the same as the popular list; without a baseline they are null and only
+         *     sorting by `title` or `ratings` is possible.
+         */
+        get: operations["list_movies_movies_get"];
         put?: never;
         /**
          * Create Movie
@@ -159,6 +165,29 @@ export interface paths {
          *     only: nothing here starts retraining or changes the active version.
          */
         get: operations["debug_system_debug_system_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/debug/popularity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Debug Popularity
+         * @description specs/demo-popularity-live/spec.md "Popularity debug endpoint": the numbers behind the popular list a new user
+         *     receives. `m` is a what-if (serving keeps the configured value); `deltas=false` ignores the ledger. Works whether or
+         *     not `popularity.live` is on (`liveEnabled` says which list /recommendations uses); without a usable baseline it shows
+         *     the artifact list.
+         */
+        get: operations["debug_popularity_debug_popularity_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -291,6 +320,106 @@ export interface components {
             title: string;
             /** Genres */
             genres: string[];
+        };
+        /** MovieListOut */
+        MovieListOut: {
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Size */
+            size: number;
+            /** Pages */
+            pages: number;
+            /** Hasstats */
+            hasStats: boolean;
+            /** M */
+            m: number;
+            /** C */
+            c: number | null;
+            /** Items */
+            items: components["schemas"]["MovieRowOut"][];
+        };
+        /**
+         * MovieRowOut
+         * @description One row of GET /movies.
+         */
+        MovieRowOut: {
+            /** Movieid */
+            movieId: number;
+            /** Title */
+            title: string;
+            /** Genres */
+            genres: string[];
+            /** Ratings */
+            ratings: number;
+            /** Trainratings */
+            trainRatings: number;
+            /** Newratings */
+            newRatings: number;
+            /** Avgrating */
+            avgRating: number | null;
+            /** Wr */
+            wr: number | null;
+            /** Isdemo */
+            isDemo: boolean;
+        };
+        /** PopularityBaselineOut */
+        PopularityBaselineOut: {
+            /** Generatedat */
+            generatedAt: string;
+            /** Cutoff */
+            cutoff: number;
+            /** Ratings */
+            ratings: number;
+        };
+        /**
+         * PopularityItemOut
+         * @description One row of GET /debug/popularity: the numbers behind a movie's weighted rating.
+         */
+        PopularityItemOut: {
+            /** Rank */
+            rank: number;
+            /** Movieid */
+            movieId: number;
+            /** Title */
+            title: string;
+            /** Genres */
+            genres: string;
+            /** Avgrating */
+            avgRating: number | null;
+            /** Support */
+            support: number;
+            /** Basesupport */
+            baseSupport: number;
+            /** Newratings */
+            newRatings: number;
+            /** Wr */
+            wr: number;
+            /** Baserank */
+            baseRank: number | null;
+        };
+        /** PopularityOut */
+        PopularityOut: {
+            /** Source */
+            source: string;
+            /** Liveenabled */
+            liveEnabled: boolean;
+            /** Preview */
+            preview: boolean;
+            /** M */
+            m: number;
+            /** C */
+            c: number | null;
+            /** Minsupport */
+            minSupport: number;
+            baseline: components["schemas"]["PopularityBaselineOut"] | null;
+            /** Appliedevents */
+            appliedEvents: number;
+            /** Generatedat */
+            generatedAt: string;
+            /** Items */
+            items: components["schemas"]["PopularityItemOut"][];
         };
         /** RatedMovieOut */
         RatedMovieOut: {
@@ -583,6 +712,45 @@ export interface operations {
             };
         };
     };
+    list_movies_movies_get: {
+        parameters: {
+            query?: {
+                /** @description words of the title; every one must occur, any letter case */
+                q?: string;
+                /** @description one MovieLens genre, any letter case */
+                genre?: string | null;
+                sort?: "title" | "ratings" | "avg" | "wr";
+                /** @description default asc for title, desc otherwise */
+                order?: ("asc" | "desc") | null;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovieListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_movie_movies_post: {
         parameters: {
             query?: never;
@@ -661,6 +829,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemStatusOut"];
+                };
+            };
+        };
+    };
+    debug_popularity_debug_popularity_get: {
+        parameters: {
+            query?: {
+                n?: number;
+                m?: number | null;
+                deltas?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PopularityOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

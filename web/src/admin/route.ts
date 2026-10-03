@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 /** The admin sections and their URL hashes (design D-7): reloading or sharing the link opens the same section. */
-export const SECTIONS = ['overview', 'cases', 'users', 'movies', 'models', 'log'] as const
+export const SECTIONS = ['overview', 'cases', 'users', 'movies', 'popularity', 'models', 'log'] as const
 export type Section = (typeof SECTIONS)[number]
 
 export interface Route {
@@ -15,6 +15,7 @@ export const SECTION_TITLES: Record<Section, string> = {
   cases: 'Case test',
   users: 'Người dùng',
   movies: 'Phim',
+  popularity: 'Phổ biến',
   models: 'Model',
   log: 'Nhật ký',
 }

@@ -23,6 +23,8 @@ export function MovieCard({
   onRate,
   showReason = true,
   technical = false,
+  showRank = true,
+  ratedStars = null,
   className,
 }: {
   item: Recommendation
@@ -30,6 +32,10 @@ export function MovieCard({
   onRate: (stars: number) => void
   showReason?: boolean
   technical?: boolean
+  /** False for a search result: it has no rank in a recommendation list. */
+  showRank?: boolean
+  /** The stars this user already gave the movie (from the rating history): shown as a line, the movie can still be rated again. */
+  ratedStars?: number | null
   className?: string
 }) {
   const { title, year } = splitYear(item.title)
@@ -50,10 +56,12 @@ export function MovieCard({
       )}
       <GenreTile genres={item.genres} />
       <div className="flex flex-1 flex-col gap-2 p-3">
-        <div className="font-mono text-xs text-muted-foreground">
-          #{item.rank}
-          {technical && <> · score {item.score.toFixed(4)}</>}
-        </div>
+        {(showRank || technical) && (
+          <div className="font-mono text-xs text-muted-foreground">
+            {showRank && <>#{item.rank}</>}
+            {technical && <>{showRank ? ' · ' : ''}score {item.score.toFixed(4)}</>}
+          </div>
+        )}
         <h3 className="line-clamp-2 text-base font-semibold leading-snug" title={title}>
           {title}
         </h3>
@@ -79,11 +87,13 @@ export function MovieCard({
           />
         </div>
         <div className="flex min-h-5 items-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-          {pending && (
+          {pending ? (
             <>
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
               <span>{STATE_TEXT[pending.phase]}</span>
             </>
+          ) : (
+            ratedStars != null && <span>Bạn đã chấm {String(ratedStars).replace('.', ',')} sao</span>
           )}
         </div>
       </div>

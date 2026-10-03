@@ -1,4 +1,30 @@
-import type { SystemStatus } from '@/shared/api/types'
+import type { MovieList, MovieRow, Popularity, PopularityItem, SystemStatus } from '@/shared/api/types'
+
+export const movieRow = (movieId: number, over: Partial<MovieRow> = {}): MovieRow => ({
+  movieId,
+  title: `Film ${movieId} (2000)`,
+  genres: ['Crime', 'Drama'],
+  ratings: 20_000,
+  trainRatings: 15_000,
+  newRatings: 0,
+  avgRating: 4.1234,
+  wr: 4.0987,
+  isDemo: false,
+  ...over,
+})
+
+/** A page of the catalog as GET /movies answers it. */
+export const movieList = (items: MovieRow[], over: Partial<MovieList> = {}): MovieList => ({
+  total: items.length,
+  page: 1,
+  size: 20,
+  pages: items.length ? 1 : 0,
+  hasStats: true,
+  m: 1000,
+  c: 3.5287,
+  items,
+  ...over,
+})
 
 export const systemStatus = (over: Partial<SystemStatus> = {}): SystemStatus => ({
   activeVersion: 'v1.0.0',
@@ -46,4 +72,32 @@ export const debugUser = (userId: number, interactionCount: number) => ({
   lastUpdated: '2026-10-03T07:00:00',
   pipeline: { lastBatchId: 15, lastRunAt: '2026-10-03T07:00:01' },
   modelVersion: 'v1.0.0',
+})
+
+export const popularityItem = (rank: number, movieId: number, over: Partial<PopularityItem> = {}): PopularityItem => ({
+  rank,
+  movieId,
+  title: `Film ${movieId} (2000)`,
+  genres: 'Crime|Drama',
+  avgRating: 4.2,
+  support: 20_000,
+  baseSupport: 20_000,
+  newRatings: 0,
+  wr: 4.1,
+  baseRank: rank,
+  ...over,
+})
+
+export const popularityResponse = (items: PopularityItem[], over: Partial<Popularity> = {}): Popularity => ({
+  source: 'live',
+  liveEnabled: true,
+  preview: false,
+  m: 1000,
+  c: 3.5287,
+  minSupport: 100,
+  baseline: { generatedAt: '2026-10-03T01:22:45Z', cutoff: 1476348398, ratings: 22_399_368 },
+  appliedEvents: 50,
+  generatedAt: '2026-10-03T09:00:00Z',
+  items,
+  ...over,
 })

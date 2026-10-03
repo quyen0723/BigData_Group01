@@ -56,6 +56,7 @@ describe('route', () => {
     expect(parseHash('#/cases')).toEqual({ section: 'cases', userId: null })
     expect(parseHash('#/movies')).toEqual({ section: 'movies', userId: null })
     expect(parseHash('#/models')).toEqual({ section: 'models', userId: null })
+    expect(parseHash('#/popularity')).toEqual({ section: 'popularity', userId: null })
     expect(parseHash('#/log')).toEqual({ section: 'log', userId: null })
   })
 

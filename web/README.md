@@ -73,8 +73,9 @@ npm run dev        # http://localhost:5173/ui/app.html  and  /ui/admin.html (bas
 ```
 src/shared/   api client (never throws, status 0 = network error), query hooks, lib (movie, tier, sources, genre colours,
               retry ids, RatingFlow), ui (shadcn components, StarRating, MovieCard, GenreTile), styles (tokens, fonts)
-src/user/     account chooser (personas, create account), Home (banner, feed rows, history), toasts
-src/admin/    shell + sidebar (hash routes #/overview #/cases #/users/<id> #/movies #/models #/log), cases, event log
+src/user/     account chooser (personas, create account), Home (banner, movie search, feed rows, history), toasts
+src/admin/    shell + sidebar (hash routes #/overview #/cases #/users/<id> #/movies #/popularity #/models #/log), cases, event log,
+              movies (demo panel + searchable catalog table), popularity (live WR table)
 src/test/     setup and the fake API
 ```
 

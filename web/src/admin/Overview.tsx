@@ -21,6 +21,7 @@ const LINKS: Array<[Section, string]> = [
   ['cases', 'Chạy một case test'],
   ['users', 'Xem một người dùng'],
   ['movies', 'Thêm phim demo'],
+  ['popularity', 'Xem phim phổ biến (WR)'],
   ['models', 'Vòng đời model'],
 ]
 

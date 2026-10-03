@@ -59,5 +59,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    // jsdom + userEvent tests (dialogs with 19 checkboxes) take 2-3 s alone and more than 5 s when the whole suite runs
+    // in parallel on a laptop that also runs Docker; the 5 s default made them fail without any logic being wrong.
+    testTimeout: 15_000,
   },
 })

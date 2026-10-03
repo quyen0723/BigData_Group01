@@ -51,7 +51,7 @@ export const CASES: CaseDef[] = [
     retrain: 'Không',
     chot: 'weighted rating (Bayesian/IMDb-style)',
     decision:
-      'Popularity xếp theo weighted rating WR = v/(v+m)·R + m/(v+m)·C (m = 1000, C = điểm trung bình tập train) trên các phim có ít nhất 100 rating; Quyên (Person 1) tính và xuất ra popular_movies.json.',
+      'Popularity xếp theo weighted rating WR = v/(v+m)·R + m/(v+m)·C (m = 1000, C = điểm trung bình tập train) trên các phim có ít nhất 100 rating. Quyên (Person 1) định nghĩa và tính offline (popular_movies.json); khi popularity.live bật, API tính lại từ số liệu tập train cộng rating mới đã áp dụng, xem mục Phổ biến.',
     how: ['Mỗi lần chọn case này, trang sinh một userId mới chưa có lịch sử.', 'Quan sát tier 0_history / POPULARITY.'],
   },
   {

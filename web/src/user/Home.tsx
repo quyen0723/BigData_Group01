@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { Film, LogOut } from 'lucide-react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
 import { keys } from '@/shared/api/keys'
 import {
@@ -16,6 +16,7 @@ import type { RatingEvent } from '@/shared/lib/ratingFlow'
 import { Button } from '@/shared/ui/button'
 import { useAccount } from './AccountContext'
 import { Feed } from './Feed'
+import { MovieSearch } from './MovieSearch'
 import { noticeFor } from './events'
 import { RatingHistory } from './RatingHistory'
 import { TierBanner } from './TierBanner'
@@ -35,6 +36,9 @@ export function Home() {
   const recsTitleRef = useRef<HTMLHeadingElement>(null)
   const titles = useRef(new Map<number, string>())
   const rateRef = useRef<(movieId: number, stars: number) => void>(() => {})
+  const rememberTitle = useCallback((movieId: number, title: string) => {
+    titles.current.set(movieId, splitYear(title).title)
+  }, [])
 
   useEffect(() => {
     for (const r of recs.data?.recommendations ?? []) titles.current.set(r.movieId, splitYear(r.title).title)
@@ -76,6 +80,12 @@ export function Home() {
   }, [rate])
 
   const total = history.data?.total
+  // The stars the user gave to the movies of their recent history, so a search result can say "Bạn đã chấm N sao".
+  const ratedStars = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const item of history.data?.items ?? []) if (typeof item.rating === 'number') map.set(item.movieId, item.rating)
+    return map
+  }, [history.data])
   return (
     <>
       <header className="border-b bg-card">
@@ -119,6 +129,13 @@ export function Home() {
           fallbackReason={recs.data?.fallbackReason}
           rated={total}
           threshold={threshold}
+        />
+
+        <MovieSearch
+          pending={pending}
+          ratedStars={ratedStars}
+          rememberTitle={rememberTitle}
+          onRate={(movieId, stars) => void rate(movieId, stars)}
         />
 
         <Feed

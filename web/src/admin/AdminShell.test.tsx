@@ -35,11 +35,11 @@ afterEach(() => {
 })
 
 describe('admin shell', () => {
-  it('has the six sections in the sidebar and marks the open one', async () => {
+  it('has the seven sections in the sidebar and marks the open one', async () => {
     api()
     mount('#/overview')
     const nav = screen.getByRole('navigation', { name: 'Các mục quản trị' })
-    for (const name of ['Tổng quan', 'Case test', 'Người dùng', 'Phim', 'Model', 'Nhật ký']) {
+    for (const name of ['Tổng quan', 'Case test', 'Người dùng', 'Phim', 'Phổ biến', 'Model', 'Nhật ký']) {
       expect(within(nav).getByRole('link', { name })).toBeInTheDocument()
     }
     expect(within(nav).getByRole('link', { name: 'Tổng quan' })).toHaveAttribute('aria-current', 'page')

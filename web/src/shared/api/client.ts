@@ -1,12 +1,16 @@
 import type {
   DebugUser,
   MovieCreated,
+  MovieList,
+  Popularity,
   RatingAccepted,
   RatingHistory,
   RatingStatus,
   RecommendationResponse,
   SystemStatus,
 } from './types'
+
+export type MovieSort = 'title' | 'ratings' | 'avg' | 'wr'
 
 /** What every call returns: like the old pages, never throws. A network failure is `status: 0`. */
 export interface ApiResult<T> {
@@ -65,6 +69,23 @@ export const api = {
   system: () => fetchJson<SystemStatus>('/debug/system'),
 
   health: () => fetchJson<{ status: string }>('/health'),
+
+  /** The movie catalog, searched (demo-only). `order` empty = the server default for the sort key. */
+  movies: (params: { q?: string; genre?: string | null; sort?: MovieSort; order?: 'asc' | 'desc' | null; page?: number; size?: number } = {}) => {
+    const query = new URLSearchParams({ page: String(params.page ?? 1), size: String(params.size ?? 20), sort: params.sort ?? 'ratings' })
+    if (params.q?.trim()) query.set('q', params.q.trim())
+    if (params.genre) query.set('genre', params.genre)
+    if (params.order) query.set('order', params.order)
+    return fetchJson<MovieList>(`/movies?${query.toString()}`)
+  },
+
+  /** The numbers behind the popular list (demo-only). `m` is a what-if: serving keeps its configured value. */
+  popularity: (params: { n?: number; m?: number | null; deltas?: boolean } = {}) => {
+    const query = new URLSearchParams({ n: String(params.n ?? 10) })
+    if (params.m != null) query.set('m', String(params.m))
+    if (params.deltas === false) query.set('deltas', 'false')
+    return fetchJson<Popularity>(`/debug/popularity?${query.toString()}`)
+  },
 
   postRating: (body: { userId: number; movieId: number; rating: number; eventId: string }) =>
     fetchJson<RatingAccepted & { detail?: string }>('/ratings', json(body)),

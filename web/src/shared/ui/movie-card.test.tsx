@@ -22,6 +22,34 @@ describe('MovieCard', () => {
     expect(screen.queryByText('Thriller')).not.toBeInTheDocument()
   })
 
+  it('can hide the rank for a search result, which has none', () => {
+    render(<MovieCard item={{ ...base, rank: 0, source: 'search' }} showRank={false} showReason={false} onRate={() => {}} />)
+    expect(screen.queryByText(/^#/)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Pulp Fiction' })).toBeInTheDocument()
+  })
+
+  it('keeps the score in the technical view even without the rank', () => {
+    render(<MovieCard item={base} technical showRank={false} onRate={() => {}} />)
+    expect(screen.getByText('score 0.0159')).toBeInTheDocument()
+    expect(screen.queryByText('#3')).not.toBeInTheDocument()
+  })
+
+  it('says what the user gave the movie, with a decimal comma, and the stars stay available', () => {
+    const { rerender } = render(<MovieCard item={base} ratedStars={4.5} onRate={() => {}} />)
+    expect(screen.getByText('Bạn đã chấm 4,5 sao')).toBeInTheDocument()
+    for (const star of screen.getAllByRole('radio')) expect(star).not.toHaveAttribute('aria-disabled', 'true')
+    rerender(<MovieCard item={base} ratedStars={5} onRate={() => {}} />)
+    expect(screen.getByText('Bạn đã chấm 5 sao')).toBeInTheDocument()
+    rerender(<MovieCard item={base} ratedStars={null} onRate={() => {}} />)
+    expect(screen.queryByText(/Bạn đã chấm/)).not.toBeInTheDocument()
+  })
+
+  it('shows the state of a rating in flight instead of the earlier rating', () => {
+    render(<MovieCard item={base} ratedStars={3} pending={{ stars: 5, phase: 'updating', eventId: 'e1' }} onRate={() => {}} />)
+    expect(screen.getByText('Đang cập nhật gợi ý…')).toBeInTheDocument()
+    expect(screen.queryByText(/Bạn đã chấm/)).not.toBeInTheDocument()
+  })
+
   it('draws the tile of the first genre with its name, not only a colour', () => {
     const { container } = render(<MovieCard item={base} onRate={() => {}} />)
     const tile = container.querySelector('[data-genre]')!
