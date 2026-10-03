@@ -14,17 +14,18 @@ const NEW_FILM = movieRow(900001, { title: 'Brand New (2019)', genres: ['Drama']
 const DEMO = movieRow(9_000_001, { title: 'Phim thử', genres: ['Crime', 'Drama'], ratings: 0, trainRatings: 0, avgRating: null, wr: null, isDemo: true })
 
 type Reply = ReturnType<typeof movieList> | { status: number; body: unknown }
+type Replier = (p: URLSearchParams) => Reply | Promise<Reply>
 
 function params(path: string) {
   return new URLSearchParams(path.split('?')[1] ?? '')
 }
 
-function setup(reply: (p: URLSearchParams) => Reply = () => movieList([PULP, NEW_FILM, DEMO]), client?: QueryClient) {
+function setup(reply: Replier = () => movieList([PULP, NEW_FILM, DEMO]), client?: QueryClient) {
   const api = installFakeApi([
     [
       /^GET \/movies\?/,
-      (req) => {
-        const out = reply(params(req.path))
+      async (req) => {
+        const out = await reply(params(req.path))
         return 'status' in out ? out : { status: 200, body: out }
       },
     ],
@@ -165,6 +166,27 @@ describe('paging', () => {
     expect(api.callsTo(/genre=Drama/).filter((c) => params(c.path).get('page') !== '1')).toHaveLength(0)
   })
 
+  it('keeps the page number of the rows on screen while the next page loads', async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    setup(async (p) => {
+      const page = Number(p.get('page'))
+      if (page === 2) await gate // the second page is slow
+      return movieList([movieRow(page * 10, { title: `Page ${page} movie` })], { total: 87, page, pages: 3 })
+    })
+    await screen.findByText('Page 1 movie')
+    await userEvent.click(screen.getByRole('button', { name: 'Sau' }))
+    expect(screen.getByText('Page 1 movie')).toBeInTheDocument() // still the first page's rows ...
+    expect(screen.getByText('87 phim · trang 1/3')).toBeInTheDocument() // ... so the heading and the pager say page 1, not 2
+    expect(screen.getByText('Trang 1 / 3')).toBeInTheDocument()
+    release()
+    expect(await screen.findByText('Page 2 movie')).toBeInTheDocument()
+    expect(screen.getByText('87 phim · trang 2/3')).toBeInTheDocument()
+    expect(screen.getByText('Trang 2 / 3')).toBeInTheDocument()
+  })
+
   it('has no pager for a single page', async () => {
     setup()
     await screen.findByText('Pulp Fiction (1994)')
@@ -219,5 +241,15 @@ describe('empty and failing', () => {
     expect(await screen.findByText('Pulp Fiction (1994)')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(api.callsTo(/sort=avg/)).toHaveLength(1) // a 422 is a final answer: not asked again
+  })
+
+  it('goes back to the default direction when it falls back to the rating count', async () => {
+    const api = setup((p) => (p.get('sort') === 'avg' ? { status: 422, body: { detail: 'average rating and WR are not available' } } : movieList([PULP])))
+    await screen.findByText('Pulp Fiction (1994)')
+    await userEvent.click(screen.getByRole('button', { name: /Thứ tự: giảm dần/ }))
+    await waitFor(() => expect(lastParams(api).get('order')).toBe('asc'))
+    await userEvent.selectOptions(screen.getByLabelText('Sắp xếp theo'), 'avg')
+    await waitFor(() => expect(screen.getByLabelText('Sắp xếp theo')).toHaveValue('ratings'))
+    expect(await screen.findByRole('button', { name: /Thứ tự: giảm dần/ })).toBeInTheDocument() // not "ascending": that would list the least rated first
   })
 })

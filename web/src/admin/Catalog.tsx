@@ -65,9 +65,13 @@ export function Catalog() {
   const statsGone = query.error instanceof ApiError && query.error.status === 422 && needsStats
   const noStats = (data != null && !data.hasStats) || statsGone
 
-  // Fall back to the rating count instead of leaving the table on an error.
+  // Fall back to the rating count instead of leaving the table on an error. The direction goes back to the default too: "ascending" chosen for
+  // the average would otherwise list the least rated movies first.
   useEffect(() => {
-    if (noStats && needsStats) setSort('ratings')
+    if (noStats && needsStats) {
+      setSort('ratings')
+      setOrder(null)
+    }
   }, [noStats, needsStats])
 
   const DirectionIcon = direction === 'desc' ? ArrowDown : ArrowUp
@@ -80,7 +84,7 @@ export function Catalog() {
         </h2>
         {data && (
           <p className="text-sm text-muted-foreground" aria-live="polite">
-            {number(data.total)} phim{data.pages > 0 ? ` · trang ${page}/${number(data.pages)}` : ''}
+            {number(data.total)} phim{data.pages > 0 ? ` · trang ${data.page}/${number(data.pages)}` : ''}
           </p>
         )}
       </div>
@@ -218,7 +222,7 @@ export function Catalog() {
             Trước
           </Button>
           <span className="text-sm text-muted-foreground">
-            Trang {page} / {number(data.pages)}
+            Trang {data.page} / {number(data.pages)}
           </span>
           <Button type="button" variant="outline" disabled={page >= data.pages} onClick={() => setPage((p) => p + 1)}>
             Sau
