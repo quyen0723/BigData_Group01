@@ -382,6 +382,7 @@ def delete_movie(
 
 
 GENRE_BY_LOWER = {g.lower(): g for g in MOVIELENS_GENRES}
+_NO_DELTAS: dict = {}       # one shared object: the sorted catalog is reused only for the same objects, a new {} per request would never match
 
 
 @app.get("/movies", response_model=MovieListOut, dependencies=[Depends(require_demo)])
@@ -402,12 +403,12 @@ def list_movies(
     if genre is not None and genre.lower() not in GENRE_BY_LOWER:
         raise HTTPException(status_code=422, detail=f"unknown genre {genre!r}; allowed: {sorted(MOVIELENS_GENRES)}")
     snapshot = popularity.snapshot()
-    stats, deltas, c = (snapshot[0].stats, snapshot[1], snapshot[0].c) if snapshot else (None, {}, None)
+    stats, deltas, c = (snapshot[0].stats, snapshot[1], snapshot[0].c) if snapshot else (None, _NO_DELTAS, None)
     m = cfg.popularity.m
     try:
         result = search_catalog(
             catalog.get(), stats, deltas, q=q, genre=genre, sort=sort, order=order, page=page, size=size, m=m,
-            c=c if c is not None else 0.0, assume_sorted=True,
+            c=c if c is not None else 0.0, assume_sorted=True, orders=catalog.orders,
         )
     except StatsUnavailable as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

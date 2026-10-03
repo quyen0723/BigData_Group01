@@ -1,10 +1,13 @@
 # Tests: openspec/changes/movie-catalog-search/specs/movie-catalog — the pure search, the statistics on each row, the cache.
 import math
 import random
+import threading
+import time
 
 import pytest
 
-from serving.catalog import CatalogCache, StatsUnavailable, make_entry, search, tokens
+import serving.catalog as catalog_module
+from serving.catalog import MAX_ORDERS, CatalogCache, OrderCache, StatsUnavailable, make_entry, search, tokens
 from serving.popularity import weighted_rating
 
 M, C = 1000.0, 3.5
@@ -106,10 +109,22 @@ def test_missing_values_come_last_in_both_directions(sort):
         assert {900001, 5} <= {r.movie_id for r in result.rows[len(present):]}
 
 
-def test_ties_keep_movie_id_ascending_whatever_the_direction():
+@pytest.mark.parametrize("assume_sorted", [False, True])                              # True is the only mode the API uses
+def test_ties_keep_movie_id_ascending_whatever_the_direction(assume_sorted):
     tie = [entry(30, "C", support=5), entry(10, "A", support=5), entry(20, "B", support=5)]
-    assert ids(search(tie, None, {}, sort="ratings", order="desc")) == [10, 20, 30]
-    assert ids(search(tie, None, {}, sort="ratings", order="asc")) == [10, 20, 30]
+    if assume_sorted:
+        tie.sort(key=lambda e: e.movie_id)                                          # the precondition of assume_sorted
+    same_wr = {10: (100, 400.0), 20: (100, 400.0), 30: (100, 400.0)}
+    for order in ("desc", "asc"):
+        assert ids(search(tie, None, {}, sort="ratings", order=order, assume_sorted=assume_sorted)) == [10, 20, 30]
+        assert ids(search(tie, same_wr, {}, sort="wr", order=order, assume_sorted=assume_sorted, m=M, c=C)) == [10, 20, 30]
+        assert ids(search(tie, same_wr, {}, sort="avg", order=order, assume_sorted=assume_sorted, m=M, c=C)) == [10, 20, 30]
+
+
+def test_page_and_size_must_be_at_least_one():
+    for page, size in ((0, 20), (-1, 20), (1, 0), (1, -5)):
+        with pytest.raises(ValueError, match="at least 1"):
+            search(CATALOG, STATS, {}, page=page, size=size)
 
 
 def test_pagination_and_pages():
@@ -142,8 +157,10 @@ def test_bad_sort_or_order_is_refused():
         search(CATALOG, STATS, {}, order="sideways")
 
 
-def test_matches_a_brute_force_search_on_random_data():
+@pytest.mark.parametrize("mode", ["plain", "assume_sorted", "cached_order"])           # the API runs "cached_order": sorted once, filtered per search
+def test_matches_a_brute_force_search_on_random_data(mode):
     rng = random.Random(5)
+    orders = OrderCache() if mode == "cached_order" else None
     words = ["red", "blue", "night", "day", "city", "love", "war", "king"]
     genres = ["Drama", "Comedy", "Action", "Western", "Crime"]
     entries, stats = [], {}
@@ -155,7 +172,9 @@ def test_matches_a_brute_force_search_on_random_data():
             stats[i] = (n, n * rng.uniform(2.0, 4.8))
     for q, genre, sort, order in [("night", None, "wr", "desc"), ("red city", "Drama", "avg", "asc"), ("", "Western", "ratings", "desc"),
                                   ("war", "crime", "title", "desc"), ("king", None, "ratings", "asc")]:
-        got = search(entries, stats, {}, q=q, genre=genre, sort=sort, order=order, size=50, m=M, c=C)
+        for _ in range(2 if orders else 1):                                          # the second call of a cached order is a hit
+            got = search(entries, stats, {}, q=q, genre=genre, sort=sort, order=order, size=50, m=M, c=C,
+                         assume_sorted=mode != "plain", orders=orders)
         want = [e for e in entries if all(w in e.title_lc for w in q.split()) and (genre is None or genre.lower() in e.genres_lc)]
 
         def value(e):
@@ -226,3 +245,115 @@ def test_a_failed_background_refresh_keeps_the_old_copy_and_retries_soon():
     cache.get()
     cache.wait()
     assert repo.reads == 2
+
+
+# ---- OrderCache: the catalog is sorted once per data snapshot, not per request ------------------------------------------------
+
+def test_the_order_is_built_once_for_the_same_data_and_again_when_the_data_changes(monkeypatch):
+    calls = []
+    real = catalog_module._order
+    monkeypatch.setattr(catalog_module, "_order", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    orders = OrderCache()
+    entries = sorted(CATALOG, key=lambda e: e.movie_id)
+
+    def run(deltas, sort="wr", **kw):
+        return search(entries, STATS, deltas, sort=sort, size=50, m=M, c=C, assume_sorted=True, orders=orders, **kw)
+
+    full = run(DELTAS)
+    for q in ("", "godfather", "pulp", "shane"):                                    # other filters on the same order: no new sort
+        run(DELTAS, q=q)
+    assert len(calls) == 1 and ids(full) == ids(search(entries, STATS, DELTAS, sort="wr", size=50, m=M, c=C, assume_sorted=True))
+    run(dict(DELTAS))                                                                # a new deltas object (a rating arrived): rebuilt
+    assert len(calls) == 3                                                           # (one for the cached call, one for the uncached reference above)
+    run(DELTAS, order="asc")                                                         # another direction is another order
+    assert len(calls) == 4
+    run({}, sort="title")
+    run({1: (1, 1.0)}, sort="title")                                                 # a title order does not depend on the ratings
+    assert len(calls) == 5
+
+
+def test_concurrent_requests_for_one_order_build_it_once():
+    orders = OrderCache()
+    built, started, release = [], threading.Event(), threading.Event()
+    sources = (object(),)
+
+    def build():
+        built.append(1)
+        started.set()
+        assert release.wait(5)
+        return ["order"]
+
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(orders.get("k", sources, build))) for _ in range(4)]
+    threads[0].start()
+    assert started.wait(5)                                                           # the first one is sorting
+    for t in threads[1:]:
+        t.start()
+    time.sleep(0.1)
+    release.set()
+    for t in threads:
+        t.join(5)
+    assert len(built) == 1 and len(results) == 4 and all(r is results[0] for r in results)
+
+
+def test_the_number_of_kept_orders_is_bounded():
+    orders = OrderCache()
+    sources = (object(),)
+    for i in range(MAX_ORDERS * 3):                                                  # m comes from configuration, but never let keys pile up
+        orders.get(("wr", True, float(i), 3.5, True), sources, lambda: [])
+    assert len(orders._orders) <= MAX_ORDERS
+
+
+# ---- CatalogCache: a failed thread start, invalidate during a refresh ---------------------------------------------------------
+
+def test_a_refresh_thread_that_cannot_start_does_not_leave_the_catalog_locked(monkeypatch, caplog):
+    repo, clock = CountingRepo([{"_id": 1, "title": "A", "genres": "Drama", "support": 1}]), Clock()
+    cache = CatalogCache(repo, 9_000_000, clock=clock)
+    assert len(cache.get()) == 1
+    clock.now += 31
+
+    class NoThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog_module.threading, "Thread", NoThread)
+        assert len(cache.get()) == 1                                                 # the previous copy is served, no error
+    assert "could not start" in caplog.text
+    assert cache._lock.acquire(blocking=False)                                       # not held forever
+    cache._lock.release()
+    repo.docs.append({"_id": 2, "title": "B", "genres": "Drama", "support": 1})
+    clock.now += 10                                                                  # a few seconds later the refresh works again
+    cache.get()
+    cache.wait()
+    assert repo.reads == 2 and len(cache.get()) == 2
+
+
+def test_invalidate_does_not_wait_for_a_refresh_and_the_refresh_does_not_publish_an_older_read():
+    started, release = threading.Event(), threading.Event()
+
+    class SlowSecondRead(CountingRepo):
+        def get_catalog(self):
+            self.reads += 1
+            snapshot = list(self.docs)                                               # what this read sees: the data before the admin's change
+            if self.reads == 2:
+                started.set()
+                assert release.wait(5)
+            return snapshot
+
+    repo, clock = SlowSecondRead([{"_id": 1, "title": "A", "genres": "Drama", "support": 1}]), Clock()
+    cache = CatalogCache(repo, 9_000_000, clock=clock)
+    assert len(cache.get()) == 1
+    clock.now += 31
+    cache.get()                                                                      # starts the background refresh (read 2)
+    assert started.wait(5)
+    repo.docs.append({"_id": 2, "title": "B", "genres": "Drama", "support": 1})      # an admin adds a movie while that read is in progress
+    t0 = time.monotonic()
+    cache.invalidate()
+    assert time.monotonic() - t0 < 1.0                                               # POST /movies is not held up by the read
+    release.set()
+    cache.wait()
+    assert [e.movie_id for e in cache.get()] == [1, 2] and repo.reads == 3           # the older read was not kept: the next request reads again

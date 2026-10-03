@@ -54,6 +54,8 @@ class LivePopularity:
         self._cache: dict[tuple, tuple[float, float, PopularityResult | None]] = {}
         # The ledger aggregation is the expensive part and does not depend on m or n: one per ledger_since and TTL, shared by every key.
         self._deltas: tuple[float, dt.datetime | None, dict] | None = None
+        # (expires_at, computed_at, (baseline, deltas) or None) for the catalog search; None is cached too.
+        self._snapshot: tuple[float, float, tuple[BaselineStats, dict] | None] | None = None
         self._last_warned: dict[str, float] = {}
 
     @property
@@ -97,19 +99,39 @@ class LivePopularity:
             self._lock.release()
 
     def snapshot(self) -> tuple[BaselineStats, dict] | None:
-        """The baseline and the ledger deltas, with the same caching as the popular list, for pages that list every movie (the catalog
-        search). Never raises; None when there is no baseline or reading it failed (the caller then has no averages)."""
-        with self._lock:
+        """The baseline and the ledger deltas, with the same caching as the popular list (a TTL, and a reader that already has a recent answer
+        never queues behind a refresh), for pages that list every movie (the catalog search). Never raises; None when there is no baseline or
+        reading it failed and nothing recent is available (the caller then has no averages). The same objects come back while nothing changed."""
+        hit = self._snapshot
+        if hit is not None and self._clock() < hit[0]:
+            return hit[2]
+        has_recent = hit is not None and hit[2] is not None and self._clock() - hit[1] <= STALE_SECONDS
+        if has_recent:
+            if not self._lock.acquire(blocking=False):
+                return hit[2]
+        else:
+            self._lock.acquire()
+        try:
+            hit = self._snapshot
+            now = self._clock()
+            if hit is not None and now < hit[0]:
+                return hit[2]
+            computed_at, value = now, None
             try:
                 baseline = self._repo.get_movie_stats()
                 if baseline is None:
                     self._warn("no_baseline", "movie_stats has no baseline: the movie search has no averages "
                                "(run `python -m loaders.build_movie_stats`)")
-                    return None
-                return baseline, self._ledger_deltas(baseline.ledger_since, self._clock())
+                else:
+                    value = (baseline, self._ledger_deltas(baseline.ledger_since, now))
             except Exception as exc:  # noqa: BLE001 - the search still works without statistics
                 self._warn("snapshot_failed", f"statistics for the movie search failed ({type(exc).__name__}: {exc})")
-                return None
+                if hit is not None and hit[2] is not None and now - hit[1] <= STALE_SECONDS:
+                    computed_at, value = hit[1], hit[2]
+            self._snapshot = (now + self._cfg.cache_ttl_seconds, computed_at, value)
+            return value
+        finally:
+            self._lock.release()
 
     def _compute(self, m: float, deltas: bool, n: int, now: float) -> PopularityResult | None:
         baseline = self._repo.get_movie_stats()
@@ -140,6 +162,8 @@ class LivePopularity:
         if cached is not None and cached[1] == since and now < cached[0]:
             return cached[2]
         fresh = self._repo.get_rating_deltas(since)
+        if cached is not None and cached[1] == since and cached[2] == fresh:
+            fresh = cached[2]                       # nothing new: keep the same object, so what was computed from it (sorted catalog) stays valid
         self._deltas = (now + self._cfg.cache_ttl_seconds, since, fresh)
         return fresh
 

@@ -70,6 +70,7 @@ export function useMovieSearch(params: { q: string; genre: string | null }, opti
   return useInfiniteQuery({
     queryKey: ['movies', 'search', params] as const,
     enabled: options.enabled,
+    refetchOnWindowFocus: false,                       // a refocus would reload every page the user opened with "Xem thêm"
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => unwrap(await api.movies({ q: params.q, genre: params.genre, page: pageParam, size: SEARCH_PAGE_SIZE })),
     getNextPageParam: (last) => (last.page < last.pages ? last.page + 1 : undefined),

@@ -7,6 +7,7 @@ from fakes import FakeServingRepository
 from fastapi.testclient import TestClient
 
 import api.main as main_module
+import serving.catalog as catalog_module
 from api.main import app, get_config, get_repository
 from serving.config import PopularityConfig
 from serving.popularity import BaselineStats
@@ -167,3 +168,29 @@ def test_many_searches_read_the_catalog_once():
     for q in ("a", "b", "pulp", "godfather", "shane") * 6:
         assert client.get(f"/movies?q={q}").status_code == 200
     assert repo.calls.count("get_catalog") == 1
+
+
+def test_the_sorted_catalog_is_reused_between_searches_and_rebuilt_when_a_rating_arrives(monkeypatch):
+    calls = []
+    real = catalog_module._order
+    monkeypatch.setattr(catalog_module, "_order", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    client, repo = make_client()                                                          # the statistics TTL is 0: every request re-reads them
+    for q in ("", "pulp", "godfather", "shane", ""):
+        assert client.get(f"/movies?sort=wr&q={q}").status_code == 200
+    assert len(calls) == 1                                                                # nothing changed between them: one sort
+    repo.ledger_events.extend(events(318, 3))                                             # ratings arrive through streaming
+    assert client.get("/movies?sort=wr&size=50").status_code == 200
+    assert len(calls) == 2
+    client.get("/movies?sort=wr")
+    assert len(calls) == 2
+    assert client.get("/movies?q=shawshank").json()["items"][0]["newRatings"] == 3        # the numbers on a row are always current
+
+
+def test_without_a_baseline_the_order_is_still_reused_between_searches(monkeypatch):
+    calls = []
+    real = catalog_module._order
+    monkeypatch.setattr(catalog_module, "_order", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    client, _ = make_client(stats=False)
+    for q in ("a", "b", "pulp"):
+        assert client.get(f"/movies?sort=ratings&q={q}").status_code == 200
+    assert len(calls) == 1
