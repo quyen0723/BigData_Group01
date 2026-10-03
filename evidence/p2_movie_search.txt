@@ -1,0 +1,26 @@
+P2 - MOVIE CATALOG AND SEARCH (OpenSpec change movie-catalog-search)
+Branch feat/live-weighted-popularity (stacked on feat/rebuild-ui-react), 2026-10-03. Reason: the admin "Phim" section only listed demo movies ("Chua co phim demo nao") although Mongo holds
+87,585 movies, there was no GET /movies and no search anywhere, so a tester could not pick a movie to rate and could not browse the catalog.
+
+=== 1. BASELINE FROM MONGO (task 1.1) ===
+movies 87,585 (demo movies >= 9,000,000: 0). Title contains "pulp" (case-insensitive): 4 = Pulp Fiction (1994), Pulp (1972), Marvel: 75 Years, From Pulp to Pop! (2014), Pulp: a Film About Life,
+Death & Supermarkets (2014). Title with "godfather" and "part": 2 (Part II, Part III). Genre Western 1,696, Documentary 9,363, Drama 34,175. Most rated by support: Shawshank 102,929, Forrest Gump 100,296,
+Pulp Fiction 98,409, The Matrix 93,808, Silence of the Lambs 90,330. Movies with support 0: 3,153.
+
+=== 2. BACKEND (tasks 2.x, 3.x) ===
+src/serving/catalog.py (pure search, CatalogCache), repository.get_catalog, LivePopularity.snapshot, GET /movies (demo-only, 404 before validation, 422 for bad parameters or sort=avg/wr without a baseline).
+Tests: test_catalog.py 16 (4 mutants caught), test_movies_search_api.py 19 (4 mutants caught). pytest 349 passed in total.
+Against the real Mongo after restarting the api (same numbers as section 1): q=pulp 4 movies; q=godfather part 2; genre=Western total 1,696; genre=Drama 34,175; most rated: Shawshank 102,939
+(102,929 + 10 ratings in the ledger), Forrest Gump 100,296, Pulp Fiction 98,425 (98,409 + 16), The Matrix 93,808; Shawshank row: trainRatings 73,945, avg 4.4282, WR 4.4162, newRatings 10.
+422 for size=51, sort=popularity, genre=Nonsense.
+Latency (laptop with the other containers running): the first request after a restart reads the 87k catalog (about 2.3 s); a search with or without a filter 40-80 ms; sorting everything by WR or
+average, or by title, 130-250 ms. The first version re-read the catalog every 30 s inside a request (a 2.7 s stall); now a request after the TTL gets the old copy at once and a background refresh runs
+(measured 47 ms for the first search after the TTL), and the entries are sorted by movieId once instead of on every search.
+Design notes: avg and WR are the training-split numbers plus ledger ratings (same as the popular list), so a movie released after 10/2016 shows its rating count but a dash for avg and WR; the table says so.
+
+=== 3. FRONTEND (tasks 4.x, 5.x) ===
+Admin: "Phim" section = demo movie panel + "Danh muc phim" table (search with 300 ms pause, genre filter, sort and direction, pager, dashes with an explanation, demo label, loading, error with retry, empty).
+User page: "Tim phim de cham" above the recommendations (2 characters or a genre, 12 results at a time with "Xem them", cards with stars, "Ban da cham N sao", nothing technical), rating through the page's own flow.
+Found by the tests: a toast about a rating given to a search result said "phim nay" instead of the title, because titles were only remembered for recommended movies; fixed (the page now remembers every result's title).
+Vitest 213 passed (186 before): Catalog 12, MoviesSection 2, MovieSearch 9, MovieCard +4; 3 mutants of the table and 4 of the search caught. npm run build PASS: app 128.2 KB gzip, admin 150.9 KB, 0 admin modules in the
+user entry, contrast lowest 4.51:1.

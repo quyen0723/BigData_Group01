@@ -92,6 +92,18 @@ curl http://127.0.0.1:8088/recommendations/1?k=5
 #   http://127.0.0.1:8088/app    user app: pick a demo persona, rate movies
 #   http://127.0.0.1:8088/admin  admin console (also /demo): case tests, demo movies, model lifecycle
 # Personas are demo accounts mapped to real MovieLens users; there is no authentication.
+# The pages are a React build (web/, built into the `api` image by `docker compose up -d --build api`).
+# api.ui in configs/serving.yaml picks what /app, /admin, /demo serve: "react" (default) or "legacy"
+# (the old static pages, always reachable at /legacy/app and /legacy/admin). Frontend dev, scripts
+# and checks: web/README.md.
+# Live weighted-rating popularity (the list a brand-new user gets): load the per-movie training statistics once
+# (~2 min, not during a demo), set popularity.live: true in configs/serving.yaml, restart `api`, then check it:
+#   docker compose -f docker/docker-compose.yml exec spark python -m loaders.build_movie_stats
+#   python scripts/wr_live_demo.py check       # live baseline == Person 1's artifacts/popular_movies.json
+# With live off, or movie_stats missing, the popular_movies.json artifact is served as before.
+# Walkthrough, expected numbers and cleanup of the synthetic users: docs/TESTING_GUIDE.md "Demo WR sống".
+# Movie search (demo only): GET /movies?q=&genre=&sort=&page=, the admin "Phim" table and the "Tìm phim để chấm" box on /app let you
+# find any of the 87,585 movies to look at or rate; test cases that use it: docs/TESTING_GUIDE.md "Test case kiểm hành vi hệ thống qua giao diện".
 
 # 4. The streaming pipeline is the `streaming` service: it already started with step 1 and
 #    restarts by itself after a Docker Desktop restart or a crash (restart: unless-stopped).

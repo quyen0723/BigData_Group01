@@ -1,0 +1,19 @@
+# Docker build context for docker/api.Dockerfile (the context is the repo root).
+# Data, dependencies and local tooling must not be sent to the daemon: movielens32m/ alone is 1.7 GB.
+movielens32m/
+movielens32m-*.zip
+*.zip
+.venv/
+.venv-serving/
+.git/
+**/.omc/
+.claude/
+logs/
+data/
+artifacts/
+evidence/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+web/node_modules/
+web/dist/

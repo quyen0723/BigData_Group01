@@ -1,0 +1,113 @@
+P2 - LIVE WEIGHTED-RATING POPULARITY (OpenSpec change live-weighted-popularity)
+Branch feat/live-weighted-popularity, started 2026-10-03 from feat/rebuild-ui-react (0e90245 + 342b039 pushed; admin React pages are not on main yet).
+
+=== 1. BASELINE BEFORE ANY CHANGE (task 1.2) ===
+Tests: pytest 185 passed (.venv-serving). Vitest 162 passed in 21 files (measured at the end of rebuild-ui-react, no web/ file touched since).
+Stored list a new user gets (Mongo popular_movies, modelVersion v1.0.0, loaded from PR #2, score = WR, m=1000, C=3.5287):
+  #1 Shawshank 4.416 (v 73,945)  #2 Godfather 4.327 (47,709)  #3 Usual Suspects 4.295 (52,639)  #4 Schindler's List 4.261 (56,865)
+  #5 Godfather II 4.241 (31,216)  #6 Fight Club 4.217 (49,758)  #7 Rear Window 4.211 (19,210)  #8 One Flew Over the Cuckoo's Nest 4.206 (33,573)
+  #9 Seven Samurai 4.205 (12,776)  #10 Casablanca 4.199 (26,335).   Serving pointer: popular_movies -> v1.0.0.
+Ledger (Mongo rating_events), read-only count: 55 events from 23 users on 20 movies, first 2026-09-26T15:39:56Z, last 2026-10-02T18:26:11Z; only index is _id.
+  Most rated in the ledger: 296 (19 events), 318 Shawshank (10), 858 Godfather (7), demo movie 9000000 (2). These will count in live WR once it is on
+  (10 more ratings on a movie with v=73,945 move its WR by about 1e-4, so the top 10 order is not expected to change).
+Synthetic users (999,000,000..999,999,999): 8 events in the ledger, 8 documents in user_rated, 8 in user_history. Real MovieLens users and the persona
+  users (An 700008, Binh 1, Chi 127249) are outside that range. movies: 87,585 documents. movie_stats collection: does not exist yet.
+Sensitivity worked out from the artifact (m=1000), used to size the demo: one 5-star rating adds 5.8e-5 to the WR of #9 Seven Samurai; about 18 ratings put it
+  above #8 (gap 0.001, rounding uncertainty +-30%). Adjacent pairs elsewhere need about 155 (#6/#7) up to thousands. Planet Earth (v 173, R 4.468, WR 3.667):
+  +100 five-star ratings -> 3.772, still far below the top-10 cut-off 4.199; about 780 five-star ratings would get it in.
+
+=== 2. BASELINE LOADED AND THE MONGO CODE CHECKED ON REAL DATA (tasks 2.3, 4.2, part of 8.1) - 2026-10-03 ===
+build_movie_stats --dry-run in the spark container: cutoff 1476348398 -> 22,399,368 ratings on 36,526 movies, mean 3.528684; checks "count equals n_train" and
+  "mean equals recorded C 3.5287" PASS. The real run wrote 36,526 documents + _meta in 119 s (movie_stats did not exist before; nothing else was touched; the running
+  api container has the old code in memory and does not read it yet). Shawshank (318): n0 73,945, sum0 327,444.5, average 4.4282 (artifact support 73,945).
+  Only 36,526 of the 87,585 catalog movies have a rating before the cutoff (the proposal's "about 80 thousand" was an estimate; the real number is 36.5 thousand).
+MongoServingRepository against the live Mongo (host Python, scripts in the session scratchpad):
+  get_movie_stats: 517 ms the first time, 5.5 ms afterwards (cached by _meta.generatedAt), total of n0 equals _meta.ratings.
+  get_rating_deltas: 20 movies in 61 ms from 55 ledger documents; it equals popularity.deltas_from_events computed in Python from the raw ledger documents.
+  50 ratings are counted from the 55 events: 4 (user, movie) pairs were rated more than once and only the latest counts (design D-7).
+Live top 10 (m=1000, ledger as it is, 9 extra ratings for Shawshank, 6 for Godfather, 1 for Godfather II) vs artifacts/popular_movies.json of Person 1:
+  same ten movieIds in the same order; max |WR live - WR artifact| 0.00037 (the artifact rounds to 3 decimals); with deltas=false (baseline only) the same 0.00037.
+  Refresh (ledger aggregation + ranking 36,526 movies): 24 ms. Seven Samurai (#9) WR 4.2054 vs One Flew Over the Cuckoo's Nest (#8) 4.2063.
+Tests so far: pytest 251 passed (185 before + 66 new: popularity 16, movie_stats_core 6, live_popularity 28, popularity_api 16). Mutation checks (each rule broken once, tests
+  must fail): popularity.py 3 of 4 caught (the 4th is equivalent: needs two ledger events with the same _id), live_popularity/service 4 of 4, endpoint 3 of 3.
+Design change found while writing the endpoint: /debug/popularity answers whether or not popularity.live is on and reports liveEnabled, because the equivalence check
+  (task 8.1) has to run before the flag is turned on.
+
+=== 3. DEMO SCRIPT, CLEANUP TOOLS AND ADMIN SECTION (tasks 5.3, 6.x, 7.x) - 2026-10-03 ===
+API restarted with the new code and popularity.live still false: /health, /recommendations (artifact order, unchanged), /debug/popularity 200 (source live, liveEnabled false,
+  50 ratings counted from the ledger), ?n=0 -> 422. Recommendations for a new user still start Shawshank, Godfather, Usual Suspects.
+wr_live_demo.py on the real API (read-only commands): check -> PASS (baseline only: same 10 movies in the same order as artifacts/popular_movies.json, WR within 0.0005).
+  plan (live top 12, 50 ledger ratings counted): closest pair is #9 Seven Samurai over #8 One Flew Over the Cuckoo's Nest: gap 0.0009, about 17 five-star ratings
+  (my estimate before measuring was about 18). Other pairs: #11 over #10 62, #7 over #6 150, #8 over #7 209, #10 over #9 215, #12 over #11 316, #5 over #4 847,
+  #6 over #5 1,641, #3 over #2 2,562, #4 over #3 2,809, #2 over #1 7,434.
+purge_demo_ratings.py dry run on the real Mongo (whole reserved range): rating_events 8, user_rated 8, user_history 8 documents (the same 8 users as in section 1).
+purge_curated_synthetic (Spark): the real curated_ratings/year=2026 holds 55 ratings (equal to the 55 ledger events), 8 of them from 8 synthetic users; dry run only, the real
+  partition was not touched. Rehearsed on a copy of that partition: --apply without --streaming-stopped refused; a range reaching user 700000 refused; --apply -> 47 ratings
+  kept, old partition kept as _purge_old_year=2026 (55); dry run afterwards "nothing to remove". The copy was deleted afterwards.
+Admin section "Pho bien" (#/popularity): table of the live top 10 (R, v with "+n moi", WR, rank against the baseline), refresh every 3 s only while the section is open and the tab
+  visible, movement markers (arrow + words, 10 s), per-row formula panel, m preview with a notice, artifact notice, error with retry. Vitest 186 passed (162 + 24 new),
+  3 mutants of the component caught. npm run build: app 126.7 KB gzip, admin 149.0 KB (budgets 250 / 350), 0 admin modules reachable from the user entry, contrast lowest 4.51:1.
+  vitest testTimeout raised from 5 s to 15 s: the dialog tests take 2-3 s alone but passed 5 s when the whole suite ran in parallel next to the Docker containers.
+pytest 271 passed + 1 warning (185 at the start of this change).
+
+=== 4. LIVE VERIFICATION ON THE REAL STACK (tasks 8.1-8.8) - 2026-10-03 ===
+8.1 check with popularity.live still off: PASS (baseline only, same 10 movies in the same order as artifacts/popular_movies.json, WR within 0.0005; max difference 0.00037).
+8.2 Refresh time (ledger aggregation + ranking 36,526 movies), scratch collection, real ledger untouched:
+      55 events (the real ledger) 24 ms | 10,000 events 121 ms (aggregation alone 147 ms median) | 100,000 events 1,071 ms (aggregation 1,196 ms).
+    The 10,000 point is a little over the 100 ms target; at 100,000 events a refresh takes about a second, which is the scaling limit named in design D-1 (counters in
+    streaming are the way up, out of scope). An alternative pipeline ($max on a composite key instead of $sort + $last) gives identical results (checked against the Python
+    reference with tied timestamps and missing ingestedAt, 20k and 100k events, with and without ledgerSince) but is only 10-20% faster, so it was not adopted.
+    /recommendations for a new user (80 requests, sequential, from the host): flag off median 35.5 ms / p95 62.5 ms (second run 36.1 / 57.0); flag on median 23.3 / 45.2 (second run
+    31.6 / 51.3). No increase (the difference is inside the noise of HTTP and Mongo on this laptop); top 3 and sources identical.
+8.3 popularity.live: true + restart api: a new user gets the same top 10 as the artifact, /debug/popularity source=live liveEnabled=true appliedEvents=50.
+8.4 python scripts/wr_live_demo.py inject --movie 2019 --n 19 (Seven Samurai, 19 synthetic users 999200001..19): sent in 1.0 s, applied by streaming 51 s after sending
+    (serve_batch[19]: 19 rows, 19 new after ledger dedup), list after: Seven Samurai #9 -> #8 (WR 4.2054 -> 4.2065, v 12,795 = 12,776 + 19), One Flew Over the Cuckoo's Nest #8 -> #9.
+    A brand-new user (599300) received Seven Samurai at rank 8 and the Cuckoo's Nest at rank 9, all source popularity, tier 0_history, no fallbackReason.
+    The admin section showed the same table on the rebuilt image: "lên 1 so với gốc #9" on Seven Samurai, "xuống 1 so với gốc #8" on the Cuckoo's Nest, formula panel
+    (v 12,795, R 4.2594, C 3.5287, m 1000, w 92.8%, "tin 93% điểm riêng"), m=0 preview (Planet Earth #1 with 175 ratings, then Shawshank, Godfather, The Blue Planet) with the notice,
+    reset back to the live list. A WR shown with 3 decimals gave both movies 4.206, so the table and the panel now show R and WR with 4 decimals.
+8.5 spam --movie 159817 --n 10 (Planet Earth, v 175, R 4.463): plan +10 -> 3.679, +100 -> 3.772, about 780 five-star ratings (4.5x its real count) to reach the top 10 (cut-off 4.199).
+    Sent 10, applied after 29 s (serve_batch[21]); real WR afterwards 3.6791 (v 185, R 4.4919), still outside the top 10. The 100 and 780 marks were NOT sent (they would add that many
+    synthetic rows to the parquet). Without --movie the script picks the lowest-support movie of the top 50 by plain average: today The Lost Room (121 ratings, about 843 needed).
+8.6 Fallbacks on the real stack: (a) movie_stats renamed away for 3.5 s with the flag on: /recommendations 200 with the artifact order (Cuckoo's Nest #8, Seven Samurai #9),
+    /debug/popularity source=artifact, ONE warning in the api log ("movie_stats has no baseline: serving the popular_movies artifact (run python -m loaders.build_movie_stats)");
+    renamed back: live again within 3.5 s, 36,527 documents (36,526 + _meta). (b) popularity.live false + restart: the new user's list is in the artifact order and
+    liveEnabled=false, /debug/popularity still answers source=live; true + restart: live order again. A failing ledger read was NOT forced on the real stack (renaming rating_events
+    would break streaming's ledger insert); it is covered by unit tests (stale result for 60 s, then the artifact, never an error).
+8.7 Streaming during all of this: healthy, RestartCount 0, no error or warning in its log, serve_batch lines show exactly the 19 and 10 new rows.
+8.8 Cleanup: purge_demo_ratings.py --yes for 999200000..999299999: 29 documents deleted from each of rating_events, user_rated, user_history; the list went back to the offline order
+    (Seven Samurai #9, WR 4.2054, +0) and appliedEvents back to 50. Left for you to decide: the 8 older synthetic users 999100001..10 (8 documents in each collection) and user 553438
+    (outside the reserved range, so the script cannot touch it); and the parquet rows of all of them (curated_ratings year=2026: 55 + 29 + 10 rows, purge_curated_synthetic.py is ready,
+    needs streaming stopped).
+
+=== 5. INDEPENDENT REVIEW AND ITS FIXES (tasks 8.9, 8.10) - 2026-10-03 ===
+Review by a read-only code-reviewer agent (separate from the author pass): 3 high, 9 medium, 7 low findings, plus a list of things it checked and found correct (Mongo pipeline vs the
+Python reference, WR formula and ordering vs split_baselines.py, /recommendations cannot 5xx because of this change, loader write order, range guards, endpoint gating, frontend polling).
+Each finding was checked against the code before fixing; what was done:
+  H1 demo_enabled true in the working copy: it is the local demo flag and is not committed (committed value false, put into the index without touching the working file, see memory
+     feedback-commit-hygiene). No test pins it: a test that asserts demo_enabled false would fail on every machine that runs the demo. TESTING_GUIDE now says the "Pho bien" section and
+     /debug/popularity need api.demo_enabled true (it shows "Khong tai duoc" on a 404).
+  H2 an empty live ranking was served instead of the artifact (a tier-0 user got 0 recommendations, silently): FIXED. LivePopularity treats "no movie reaches min_support" like a missing
+     baseline (artifact + one warning) and the service checks result.items too. Tests: empty ranking falls back and recommendations are still [3, 2, 1] from the artifact.
+  H3 build_movie_stats --ledger-since read a value without an offset as the machine's local time (UTC+7 here: 00:00 became 17:00 the day before, so ledger events the baseline already
+     holds would be counted twice): FIXED with parse_ledger_since (no offset = UTC), tested with five spellings; the old code fails that test on this machine.
+  M1 the cache was unbounded on the failure path: FIXED (_prune after a failure too; test with 100 failing keys). M2 n was in the cache key, so every n repeated the ledger aggregation,
+     and one global lock was held across Mongo: FIXED. The aggregation is cached once per ledger_since and TTL and shared by every key; a reader that already has a recent result takes it
+     instead of waiting for a refresh in progress (tests: one aggregation for n=3/12/50 and m=0/250.5; a second reader returns in under 1 s while a refresh is stuck in Mongo).
+  M3 purge_demo_ratings.py had the collection names hard-coded: FIXED (resolved through mongo.collections; a typo'd name raises instead of counting 0). M4 the loader did not verify what it
+     wrote into _meta: FIXED (after the write, the stored n0 must add up to the counted ratings and their sums give the same mean, or no _meta is written). M5 the Mongo code had no
+     automated coverage: FIXED by unit tests with a fake database for get_movie_stats (cache, rebuild, incomplete load, every missing _meta key, no _meta) and the pipeline shape, plus
+     scripts/check_live_popularity_store.py, which runs the real pipeline and reader on scratch collections of the live Mongo and compares with deltas_from_events: 10 checks PASS.
+  M6 check compared at exactly the artifact's rounding bound: FIXED (+1e-9). M7 debug traffic could evict the serving entry: FIXED (never evicted; mutant caught). M8 the parquet swap had no
+     recovery path: FIXED (recovery commands printed before the renames and when an interrupted swap is found; distinct refusal messages; comment on the NULL userId trap).
+  M9 the cleanup obligation is still open and disclosed (section 4, 8.8).
+  L1 stale "~80k" wording, L2 cutoffSource wrong with --cutoff, L3 purge docstring order sentence, L4 wait time hard-coded 60 s (now the API's ratingPollTimeoutSeconds + 0.2 s per rating),
+  L5 fractional counts silently truncated (now rejected), L6 empty cutoff crashed with a traceback (now a clear FAIL): all FIXED. L7 min-h-11 / sm:min-h-10 is the project's rule
+  (44 px on touch, 40 px from 640 px up), not a defect; scripts/demo_wr_explain.py now has a test.
+After the fixes: the loader was run again for real in the spark container (36,526 movies + _meta in 115 s, the new post-write check passed), the api restarted with the reviewed code:
+  check PASS, a new user still gets Shawshank, Godfather, Usual Suspects, /debug/popularity source live with the new baseline generatedAt.
+FINAL NUMBERS: pytest 313 passed (185 at the start of this change; +128), Vitest 186 passed in 23 files, tsc clean, npm run build PASS (app 126.7 KB, admin 149.1 KB gzip, 0 admin modules in the
+  user entry, contrast lowest 4.51:1), openspec validate live-weighted-popularity --strict valid, no TODO / skip / empty test in the new files. Mutation checks of the review fixes: empty list
+  served, no prune on failure, aggregation not shared, serving key evictable (size bound), reader waits for refresh: all caught (the expiry-branch exclusion of the serving key is redundant with
+  the size-bound branch).
+(The counts in sections 2 and 3, "pytest 251/271 passed", were true when written.)

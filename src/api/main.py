@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from confluent_kafka import Producer
 from fastapi import Depends, FastAPI, HTTPException
@@ -17,7 +20,9 @@ from fastapi import Path as PathParam
 from fastapi import Query, Response
 from fastapi.responses import FileResponse
 
+from serving.catalog import CatalogCache, StatsUnavailable, search as search_catalog
 from serving.config import ServingConfig, load_serving_config
+from serving.live_popularity import LivePopularity
 from serving.repository import MongoServingRepository, ServingRepository
 from serving.service import get_recommendations
 from streaming.events import VALID_RATINGS
@@ -32,6 +37,11 @@ from .schemas import (
     ModelVersionOut,
     MovieCreated,
     MovieIn,
+    MovieListOut,
+    MovieRowOut,
+    PopularityBaselineOut,
+    PopularityItemOut,
+    PopularityOut,
     RatedMovieOut,
     RatingAccepted,
     RatingHistoryOut,
@@ -44,6 +54,16 @@ from .schemas import (
 
 app = FastAPI(title="MovieLens Recommendation API")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+log = logging.getLogger("api")
+
+# The React build (web/ -> `npm run build`). Outside src/, which the api container mounts over, so the
+# Docker image keeps it (design D-9/D-10). Read at request time so tests and `docker run -e` can change it.
+DEFAULT_WEB_DIST_DIR = "/app/web-dist"
+
+# Pages are small and their asset names change with every build, so a browser must ask again each time;
+# assets carry a content hash in their name and never change under the same name.
+PAGE_CACHE = {"Cache-Control": "no-cache"}
+ASSET_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 MOVIELENS_GENRES = frozenset({
     "Action", "Adventure", "Animation", "Children", "Comedy", "Crime", "Documentary", "Drama",
@@ -68,6 +88,49 @@ def get_repository() -> ServingRepository:
     if _repo_singleton is None:
         _repo_singleton = MongoServingRepository(_cfg.mongo.uri, _cfg.mongo)
     return _repo_singleton
+
+
+_popularity_lock = threading.Lock()
+_popularity_singleton: tuple[ServingRepository, object, LivePopularity] | None = None
+
+
+def get_popularity(
+    repo: ServingRepository = Depends(get_repository),
+    cfg: ServingConfig = Depends(get_config),
+) -> LivePopularity:
+    """Process-wide live popularity source (design D-5): its cache and the baseline in memory must outlive a request.
+    It is rebuilt when the repository or the `popularity` settings are not the ones it was made for (tests swap both).
+    Whether /recommendations uses it is `popularity.live`; /debug/popularity can read it either way."""
+    global _popularity_singleton
+    entry = _popularity_singleton
+    if entry is None or entry[0] is not repo or entry[1] != cfg.popularity:
+        with _popularity_lock:
+            entry = _popularity_singleton
+            if entry is None or entry[0] is not repo or entry[1] != cfg.popularity:
+                entry = (repo, cfg.popularity, LivePopularity(repo, cfg.popularity))
+                _popularity_singleton = entry
+    return entry[2]
+
+
+_catalog_lock = threading.Lock()
+_catalog_singleton: tuple[ServingRepository, int, CatalogCache] | None = None
+
+
+def get_catalog_cache(
+    repo: ServingRepository = Depends(get_repository),
+    cfg: ServingConfig = Depends(get_config),
+) -> CatalogCache:
+    """Process-wide movie catalog cache (30 s). Rebuilt when the repository or the demo id range is not the one it was made for."""
+    global _catalog_singleton
+    start = cfg.new_items.id_range_start
+    entry = _catalog_singleton
+    if entry is None or entry[0] is not repo or entry[1] != start:
+        with _catalog_lock:
+            entry = _catalog_singleton
+            if entry is None or entry[0] is not repo or entry[1] != start:
+                entry = (repo, start, CatalogCache(repo, start))
+                _catalog_singleton = entry
+    return entry[2]
 
 
 def require_demo(cfg: ServingConfig = Depends(get_config)) -> None:
@@ -124,12 +187,14 @@ def recommendations(
     k: int = Query(default=_cfg.api.k_default, ge=_cfg.api.k_min, le=_cfg.api.k_max),
     repo: ServingRepository = Depends(get_repository),
     cfg: ServingConfig = Depends(get_config),
+    popularity: LivePopularity = Depends(get_popularity),
 ) -> RecommendationResponseOut:
     # userId/k are validated by FastAPI (Path gt=0 / Query ge,le) before this body
     # runs, so an invalid request never reaches get_recommendations (no store lookup).
     start = time.monotonic()
     try:
-        result = get_recommendations(userId, k, repo, cfg.routing, cfg.new_items)
+        live = popularity if cfg.popularity.live else None      # off: the artifact alone, as before
+        result = get_recommendations(userId, k, repo, cfg.routing, cfg.new_items, live)
     except RuntimeError as exc:
         # e.g. serving_meta has no active pointer — bootstrap load has not run yet.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -282,6 +347,7 @@ def create_movie(
     body: MovieIn,
     repo: ServingRepository = Depends(get_repository),
     cfg: ServingConfig = Depends(get_config),
+    catalog: CatalogCache = Depends(get_catalog_cache),
 ) -> MovieCreated:
     """specs/new-movie-cold-start/spec.md "Create a demo movie". The movie goes only into
     MongoDB (design D-10): it is a demo shortcut, not a catalog ETL."""
@@ -296,6 +362,7 @@ def create_movie(
         raise HTTPException(status_code=422, detail=f"unknown genre(s) {unknown}; allowed: {sorted(MOVIELENS_GENRES)}")
 
     doc = repo.create_demo_movie(title, genres, cfg.new_items.id_range_start, dt.datetime.now(dt.timezone.utc))
+    catalog.invalidate()                                          # the next search sees the new movie at once
     return MovieCreated(movieId=doc["_id"], title=doc["title"], genres=genres, addedAt=_iso(doc["addedAt"]))
 
 
@@ -304,12 +371,56 @@ def delete_movie(
     movieId: int = PathParam(...),
     repo: ServingRepository = Depends(get_repository),
     cfg: ServingConfig = Depends(get_config),
+    catalog: CatalogCache = Depends(get_catalog_cache),
 ) -> Response:
     """Only the reserved demo range can be deleted, so the MovieLens catalog is protected.
     Ratings already given to the movie stay in user_rated."""
     if not repo.delete_demo_movie(movieId, cfg.new_items.id_range_start):
         raise HTTPException(status_code=404, detail="no such demo movie")
+    catalog.invalidate()
     return Response(status_code=204)
+
+
+GENRE_BY_LOWER = {g.lower(): g for g in MOVIELENS_GENRES}
+
+
+@app.get("/movies", response_model=MovieListOut, dependencies=[Depends(require_demo)])
+def list_movies(
+    q: str = Query(default="", max_length=100, description="words of the title; every one must occur, any letter case"),
+    genre: str | None = Query(default=None, description="one MovieLens genre, any letter case"),
+    sort: Literal["title", "ratings", "avg", "wr"] = Query(default="ratings"),
+    order: Literal["asc", "desc"] | None = Query(default=None, description="default asc for title, desc otherwise"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=50),
+    cfg: ServingConfig = Depends(get_config),
+    popularity: LivePopularity = Depends(get_popularity),
+    catalog: CatalogCache = Depends(get_catalog_cache),
+) -> MovieListOut:
+    """specs/movie-catalog/spec.md "Movie list and search endpoint": demo-only (404 before any parameter is checked). The average rating and
+    WR are the training-split numbers plus the ratings applied since, the same as the popular list; without a baseline they are null and only
+    sorting by `title` or `ratings` is possible."""
+    if genre is not None and genre.lower() not in GENRE_BY_LOWER:
+        raise HTTPException(status_code=422, detail=f"unknown genre {genre!r}; allowed: {sorted(MOVIELENS_GENRES)}")
+    snapshot = popularity.snapshot()
+    stats, deltas, c = (snapshot[0].stats, snapshot[1], snapshot[0].c) if snapshot else (None, {}, None)
+    m = cfg.popularity.m
+    try:
+        result = search_catalog(
+            catalog.get(), stats, deltas, q=q, genre=genre, sort=sort, order=order, page=page, size=size, m=m,
+            c=c if c is not None else 0.0, assume_sorted=True,
+        )
+    except StatsUnavailable as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return MovieListOut(
+        total=result.total, page=page, size=size, pages=result.pages, hasStats=snapshot is not None, m=m, c=c,
+        items=[
+            MovieRowOut(
+                movieId=r.movie_id, title=r.title, genres=list(r.genres), ratings=r.ratings, trainRatings=r.train_ratings,
+                newRatings=r.new_ratings, avgRating=r.avg_rating, wr=r.wr, isDemo=r.is_demo,
+            )
+            for r in result.rows
+        ],
+    )
 
 
 @app.get("/debug/system", response_model=SystemStatusOut, dependencies=[Depends(require_demo)])
@@ -347,6 +458,7 @@ def debug_system(
             ratingPollTimeoutSeconds=cfg.api.rating_poll_timeout_seconds,
             newItemsEnabled=cfg.new_items.enabled,
             demoMovieIdStart=cfg.new_items.id_range_start,
+            tierThreshold=cfg.routing.threshold_t,
         ),
         demoMovies=[
             DemoMovieOut(
@@ -354,6 +466,72 @@ def debug_system(
                 genres=[g for g in m.get("genres", "").split("|") if g], addedAt=_iso(m.get("addedAt")),
             )
             for m in demo_movies
+        ],
+    )
+
+
+BASE_RANK_DEPTH = 200      # how far down the baseline ordering is searched for `baseRank`
+
+
+@app.get("/debug/popularity", response_model=PopularityOut, dependencies=[Depends(require_demo)])
+def debug_popularity(
+    n: int = Query(default=10, ge=1, le=50),
+    m: float | None = Query(default=None, ge=0, le=100000),
+    deltas: bool = Query(default=True),
+    repo: ServingRepository = Depends(get_repository),
+    cfg: ServingConfig = Depends(get_config),
+    popularity: LivePopularity = Depends(get_popularity),
+) -> PopularityOut:
+    """specs/demo-popularity-live/spec.md "Popularity debug endpoint": the numbers behind the popular list a new user
+    receives. `m` is a what-if (serving keeps the configured value); `deltas=false` ignores the ledger. Works whether or
+    not `popularity.live` is on (`liveEnabled` says which list /recommendations uses); without a usable baseline it shows
+    the artifact list."""
+    pcfg = cfg.popularity
+    effective_m = pcfg.m if m is None else m
+    result = popularity.get(m=effective_m, deltas=deltas, n=n)
+
+    if result is None:
+        pointer = repo.get_active_pointer()
+        artifact = sorted(
+            repo.get_popular_movies(pointer.artifacts["popular_movies"]),
+            key=lambda i: (-i["score"], -i.get("support", 0), i["movieId"]),
+        )[:n]
+        movies = repo.get_movies(frozenset(i["movieId"] for i in artifact))
+        return PopularityOut(
+            source="artifact", liveEnabled=pcfg.live, preview=effective_m != pcfg.m, m=effective_m, c=None,
+            minSupport=pcfg.min_support, baseline=None, appliedEvents=0,
+            generatedAt=dt.datetime.now(dt.timezone.utc).isoformat(),
+            items=[
+                PopularityItemOut(
+                    rank=i + 1, movieId=item["movieId"],
+                    title=movies.get(item["movieId"], {}).get("title", item.get("title", "")),
+                    genres=movies.get(item["movieId"], {}).get("genres", item.get("genres", "")),
+                    avgRating=None, support=int(item.get("support", 0)), baseSupport=int(item.get("support", 0)),
+                    newRatings=0, wr=float(item["score"]), baseRank=None,
+                )
+                for i, item in enumerate(artifact)
+            ],
+        )
+
+    base = popularity.get(m=effective_m, deltas=False, n=BASE_RANK_DEPTH)
+    base_rank = {p.movie_id: i + 1 for i, p in enumerate(base.items)} if base is not None else {}
+    movies = repo.get_movies(frozenset(p.movie_id for p in result.items))
+    return PopularityOut(
+        source="live", liveEnabled=pcfg.live, preview=effective_m != pcfg.m, m=result.m, c=result.c,
+        minSupport=result.min_support,
+        baseline=PopularityBaselineOut(
+            generatedAt=result.baseline.generated_at, cutoff=result.baseline.cutoff, ratings=result.baseline.ratings,
+        ),
+        appliedEvents=result.applied_events,
+        generatedAt=result.generated_at.isoformat(),
+        items=[
+            PopularityItemOut(
+                rank=i + 1, movieId=p.movie_id,
+                title=movies.get(p.movie_id, {}).get("title", ""), genres=movies.get(p.movie_id, {}).get("genres", ""),
+                avgRating=p.r, support=p.v, baseSupport=p.base_v, newRatings=p.new_ratings, wr=p.wr,
+                baseRank=base_rank.get(p.movie_id),
+            )
+            for i, p in enumerate(result.items)
         ],
     )
 
@@ -370,19 +548,85 @@ def user_ratings(
     return RatingHistoryOut(userId=userId, total=total, items=[RatedMovieOut(**item) for item in items])
 
 
+def get_web_dist() -> Path:
+    return Path(os.environ.get("WEB_DIST_DIR", DEFAULT_WEB_DIST_DIR))
+
+
+def _built_page(name: str) -> Path | None:
+    page = get_web_dist() / name
+    return page if page.is_file() else None
+
+
+_warned_missing_build = False
+
+
+def _page(cfg: ServingConfig, built_name: str, legacy_name: str, *, force: str | None = None) -> FileResponse:
+    """One of the two UIs (specs/web-frontend "Switch the default pages by configuration").
+    `force` is "react" for the -next routes (404 without a build) or "legacy" for /legacy/*;
+    None follows `api.ui` and falls back to the old page, with one warning, when the build is missing."""
+    global _warned_missing_build
+    if not cfg.api.demo_enabled:
+        raise HTTPException(status_code=404)
+    use = force or cfg.api.ui
+    if use == "react":
+        built = _built_page(built_name)
+        if built is not None:
+            return FileResponse(built, headers=PAGE_CACHE)
+        if force == "react":
+            raise HTTPException(status_code=404)
+        if not _warned_missing_build:
+            _warned_missing_build = True
+            log.warning("api.ui is 'react' but %s has no %s: serving the legacy page (run `npm run build` in web/)",
+                        get_web_dist(), built_name)
+    return FileResponse(STATIC_DIR / legacy_name, headers=PAGE_CACHE)
+
+
 @app.get("/demo", include_in_schema=False)
 @app.get("/admin", include_in_schema=False)
 def admin_page(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
     """The admin console. `/admin` is its name now; `/demo` stays so existing docs and
     evidence keep working (specs/demo-admin-console/spec.md). Demo-only: 404 when the flag is off."""
-    if not cfg.api.demo_enabled:
-        raise HTTPException(status_code=404)
-    return FileResponse(STATIC_DIR / "demo.html")
+    return _page(cfg, "admin.html", "demo.html")
 
 
 @app.get("/app", include_in_schema=False)
 def user_app_page(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
     """The user-facing page (specs/demo-user-app/spec.md). Demo-only: 404 when the flag is off."""
+    return _page(cfg, "app.html", "app.html")
+
+
+@app.get("/app-next", include_in_schema=False)
+def user_app_next(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "app.html", "app.html", force="react")
+
+
+@app.get("/admin-next", include_in_schema=False)
+def admin_next(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "admin.html", "demo.html", force="react")
+
+
+@app.get("/legacy/app", include_in_schema=False)
+def legacy_user_app(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "app.html", "app.html", force="legacy")
+
+
+@app.get("/legacy/admin", include_in_schema=False)
+def legacy_admin(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "admin.html", "demo.html", force="legacy")
+
+
+@app.get("/ui/{asset_path:path}", include_in_schema=False)
+def ui_asset(asset_path: str, cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    """Files of the React build under /ui/ (Vite `base: "/ui/"`). Only dist/assets is served, and a
+    path that leaves it is refused. 404 whenever the demo is off, so a disabled demo exposes no UI code."""
     if not cfg.api.demo_enabled:
         raise HTTPException(status_code=404)
-    return FileResponse(STATIC_DIR / "app.html")
+    try:
+        root = (get_web_dist() / "assets").resolve()
+        target = (get_web_dist() / asset_path).resolve()
+        inside = asset_path.startswith("assets/") and root in target.parents and target.is_file()
+    except (ValueError, OSError):      # e.g. a NUL byte in the path: not a file, so 404 rather than a 500
+        inside = False
+    if not inside:
+        raise HTTPException(status_code=404)
+    return FileResponse(target, headers=ASSET_CACHE)
