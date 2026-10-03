@@ -1,0 +1,11 @@
+{
+  "_comment": "Colour families for genre tiles (design D-6): bg is the tile fill (Tailwind tone 100), fg the icon and name (tone 700). Read by lib/genre.ts and by scripts/check-build.mjs, which measures every pair.",
+  "blue": { "bg": "#dbeafe", "fg": "#1d4ed8" },
+  "amber": { "bg": "#fef3c7", "fg": "#b45309" },
+  "red": { "bg": "#fee2e2", "fg": "#b91c1c" },
+  "violet": { "bg": "#ede9fe", "fg": "#6d28d9" },
+  "slate": { "bg": "#f1f5f9", "fg": "#334155" },
+  "rose": { "bg": "#ffe4e6", "fg": "#be123c" },
+  "emerald": { "bg": "#d1fae5", "fg": "#047857" },
+  "stone": { "bg": "#e7e5e4", "fg": "#44403c" }
+}
