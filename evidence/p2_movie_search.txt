@@ -43,7 +43,7 @@ High
      previous copy is served.
 Medium (fixed)
   - invalidate() no longer waits for a read in progress (generation counter; a read that began before it is not published). Measured by the review: it could hold POST /movies for the whole 2.3 s read.
-  - search() refuses page < 1 and size < 1 (a negative page returned rows from the end of the list).
+  - search() refuses page < 1 and size < 1 (a negative page returned rows from the end of the list; not reachable through the API, where FastAPI's ge=1 already answers 422: hardening for other callers).
   - Admin table: the page returns to 1 while rendering, not in an effect (the effect sent the new filter with the old page, then again with page 1); an error after a first successful load is shown (it was hidden because the
     old data was kept); a 422 for avg/wr falls back to the rating count; the heading and the pager use one page number; the search text is trimmed before the pause.
   - User search: a one-letter title with a genre selected says it is not used ("Tên phim cần ít nhất 2 ký tự nên chưa được dùng để lọc"), where the box looked broken. A 4xx answer is no longer retried; the search list is not
@@ -52,7 +52,7 @@ Medium (fixed)
 Documentation: spec (statistics, cache, new requirement "A search does not sort the catalog"), design D-1/D-3/D-5 and the risks, tasks 3.1/3.2 and section 8.
 
 AFTER the fix (api image rebuilt, same machine):
-  /movies?sort=wr&size=50   first request 2.9 s (reads the catalog and the statistics and builds the order), then 0.013-0.020 s      sort=ratings 0.020-0.023 s (first 0.096 s)      sort=title 0.015-0.032 s
+  /movies?sort=wr&size=50   first request 2.9 s (reads the catalog and the statistics and builds the order), then 0.013-0.020 s while nothing changes (section 5: over 80 s the median is 22 ms on the final code, with a spike at the catalog refresh)      sort=ratings 0.020-0.023 s (first 0.096 s)      sort=title 0.015-0.032 s
   /movies?q=pulp 0.096-0.131 s and genre=Western&sort=title 0.087-0.264 s: the filter over 87k entries is 30-55 ms in pure Python (measured apart from the API: unfiltered 0.1 ms), the rest is Mongo statistics and serialisation.
   /recommendations/1?k=10   0.048-0.058 s idle (first 0.155 s); 0.106-0.280 s while four clients loop /movies?sort=wr (was 0.84-1.83 s);   /health 0.055-0.091 s under the same load (was 0.11-0.40 s).
 
@@ -60,7 +60,7 @@ Tests: pytest 365 passed (349 before: +16), Vitest 217 passed (213 before: +4), 
 valid for both changes. Browser check on the rebuilt image: admin #/movies lists 87,585 movies (Shawshank 102,939 +10 new, Forrest Gump 100,296, Pulp Fiction 98,425 +16 new), every request answered 200.
 Mutation checks (each fix broken on purpose, then the tests run): backend 12 of 12 caught (the generation check, the lock release, the blocking invalidate, the blocking snapshot reader, the unbounded order cache, a changed-data
 check that always says "same", no single flight, a new {} per request that defeats the cache, no cache passed by the API, no page/size check, deltas object not kept, snapshot not cached; "snapshot not cached" survived until a
-test with the lock held and a cached "no statistics" answer was added). Frontend 6 of 7 caught (page reset in an effect, error hidden with data, no 422 fallback, untrimmed text, a 4xx retried, the one-letter note).
+test was added that serves a cached "no statistics" answer inside its TTL while the lock is held; after the TTL that reader waits, see section 5). Frontend 6 of 7 caught (page reset in an effect, error hidden with data, no 422 fallback, untrimmed text, a 4xx retried, the one-letter note).
 The survivor: removing the guard that hides the error box while the table falls back after a 422 shows the box for one render; the settled state is tested, the flash is not.
 
 Not changed, on purpose
@@ -69,3 +69,35 @@ Not changed, on purpose
   - MoviesSection invalidates the ["movies"] prefix, which also matches the user page's search keys; harmless today (separate bundles).
   - Timing-based tests: the new "space after the word" test waits 450 ms and asserts that nothing more was sent (it cannot fail by being slow); the older debounce tests keep their real timers.
   - refetchOnWindowFocus: false on the user search and the memoised result list are configuration and have no test of their own; the heading page number can differ from the pager for one render while a page loads.
+
+=== 5. SECOND INDEPENDENT REVIEW (of the fix in section 4) ===
+Result: REQUEST CHANGES, "not for correctness (it could not break it) but for memory": 1 high, 3 medium, 5 low, 6 documentation claims. PR #4 (section 4) had been merged by the time it came back, so these fixes are a third PR.
+The reviewer ran the suites (pytest 365, Vitest 217, build PASS) and confirmed that filtering an ordered list gives the old filter-then-sort result, that identity comparison cannot be fooled by id reuse, and that it could not build a
+get()/invalidate()/refresh interleaving that returns None, serves data older than a completed invalidate(), starves, or leaves the lock held.
+
+High (reproduced here): OrderCache pinned every order to the entries list it was built from, and every 30 s refresh built a new list of 87,585 new CatalogEntry objects even when the catalog was identical, so each key left
+alone kept its own generation alive. One generation is about 43 MB (tracemalloc). Eight keys over eight refreshes, measured with the same kind of script: 85, 128, 171, 214, 257, 300, 343, 386 MB held; with 16 keys about 690 MB, in a
+container with no memory limit.
+Fix: (1) a refresh that reads an identical catalog keeps the existing list object (nothing new is allocated and the sorted orders stay valid: this is also what makes "sorted once" true across the 30 s boundary, where before every
+order was rebuilt every 30 s); (2) CatalogCache clears the orders when it publishes a different list, and storing an order drops any order built from another list; (3) at the bound the oldest order goes, not all of them.
+Measured after the fix: identical catalog 43.0 MB at the first refresh and 47.9 MB after eight (0.7 MB per new order); a catalog whose content changes at every refresh stays at 42.3 MB. (One run of the identical-catalog script printed 84.7
+MB at the eighth refresh; two reruns printed 47.9 MB both times, so it was a one-off reading; the changing-catalog script first printed 84.6 MB because its own loop variable still held the previous list, which is fixed in the script.)
+
+Medium / low, all fixed except where said
+  - The "cached_order" mode of the brute-force test never hit the cache for four of its five cases (a new {} was passed at every call): the empty deltas are now one object and the test counts the builds (5 for 5 different sorts).
+  - OrderCache serialises builds, so a request for another order can wait for the one in progress (it was documented as "only the same order waits"): the docstring, design and spec now say what the code does. Serial builds are deliberate:
+    concurrent ones are what slowed /recommendations.
+  - The test named "a cached snapshot without a baseline is served while the lock is held" only covered the TTL fast path: a cached "no statistics" answer is served inside its TTL, and after it the reader waits for the lock (a cached
+    statistics answer does not). Renamed, docstring and section 4 corrected.
+  - _start_refresh assigned the worker after start(): now before, and reset to None when the thread cannot start; wait() right after a failed start is tested.
+  - At the bound the whole order cache was cleared: now the oldest order goes (a 53-key test, since 48 = 3 x 16 made the first version of that test pass by coincidence: found by the mutation check).
+  - The 422 fallback of the admin table kept the direction chosen for the average (ascending = the least rated first): it goes back to the default direction. The heading and the pager both show the page of the rows on screen, not the
+    requested one (a slow second page is tested).
+
+Documentation claims the reviewer showed to be wrong, corrected: "a few tens of MB" (43 MB per generation, 0.7 MB per order); "then 0.013-0.020 s" (section 4; over 80 s and two 30 s refreshes the final code gives a median of 22 ms and a smallest of 11 ms, with 1 round of 52 above 0.1 s (0.119 s, at the refresh); an earlier run of the same script on a busier machine, before the last change, gave a median of 38 ms and
+5 of 51 rounds taking 0.11-0.58 s, at 31 s, 36 s, 47 s, 64 s and 66 s: the background thread that rebuilds the 87k entries competes for the GIL; sort=ratings page 2: median 17 ms, one round of 0.117 s on the final code); "sorting takes
+0.1-1 s" (alone, over 87,585 entries: title 25 ms, ratings 55 ms, wr 205 ms; through the API 0.3-1.6 s because of Mongo, serialisation and GIL contention); "the catalog is sorted once" across a 30 s boundary (true only now);
+"search() refuses page < 1" listed as a fix (not reachable through the API, FastAPI answers 422: module hardening only).
+
+Tests: pytest 367 (365 before: +2 net), Vitest 219. Mutation checks on these fixes: backend 5 of 5 caught (older generations not dropped, a replaced list for an identical catalog, the whole cache cleared at the bound, an unstarted worker left to
+join, the newest order evicted; the "cleared at the bound" mutant survived until the 53-key test), frontend 3 of 3 (direction kept on fallback, heading and pager using the requested page).

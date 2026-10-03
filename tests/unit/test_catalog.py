@@ -1,8 +1,10 @@
 # Tests: openspec/changes/movie-catalog-search/specs/movie-catalog — the pure search, the statistics on each row, the cache.
+import gc
 import math
 import random
 import threading
 import time
+import weakref
 
 import pytest
 
@@ -158,9 +160,13 @@ def test_bad_sort_or_order_is_refused():
 
 
 @pytest.mark.parametrize("mode", ["plain", "assume_sorted", "cached_order"])           # the API runs "cached_order": sorted once, filtered per search
-def test_matches_a_brute_force_search_on_random_data(mode):
+def test_matches_a_brute_force_search_on_random_data(mode, monkeypatch):
     rng = random.Random(5)
     orders = OrderCache() if mode == "cached_order" else None
+    no_deltas: dict = {}                                                             # one object: a new {} per call would never match the cache
+    builds = []
+    real_order = catalog_module._order
+    monkeypatch.setattr(catalog_module, "_order", lambda *a, **k: (builds.append(1), real_order(*a, **k))[1])
     words = ["red", "blue", "night", "day", "city", "love", "war", "king"]
     genres = ["Drama", "Comedy", "Action", "Western", "Crime"]
     entries, stats = [], {}
@@ -173,7 +179,7 @@ def test_matches_a_brute_force_search_on_random_data(mode):
     for q, genre, sort, order in [("night", None, "wr", "desc"), ("red city", "Drama", "avg", "asc"), ("", "Western", "ratings", "desc"),
                                   ("war", "crime", "title", "desc"), ("king", None, "ratings", "asc")]:
         for _ in range(2 if orders else 1):                                          # the second call of a cached order is a hit
-            got = search(entries, stats, {}, q=q, genre=genre, sort=sort, order=order, size=50, m=M, c=C,
+            got = search(entries, stats, no_deltas, q=q, genre=genre, sort=sort, order=order, size=50, m=M, c=C,
                          assume_sorted=mode != "plain", orders=orders)
         want = [e for e in entries if all(w in e.title_lc for w in q.split()) and (genre is None or genre.lower() in e.genres_lc)]
 
@@ -193,6 +199,8 @@ def test_matches_a_brute_force_search_on_random_data(mode):
         missing = sorted([e for e in want if value(e) is None], key=lambda e: e.movie_id)
         assert [r.movie_id for r in got.rows] == [e.movie_id for e in (keyed + missing)][:50], (q, genre, sort, order)
         assert got.total == len(want) and got.pages == math.ceil(len(want) / 50)
+    if orders is not None:
+        assert len(builds) == 5                                                      # five different (sort, direction): each built once, the second call of each hit
 
 
 class CountingRepo:
@@ -228,6 +236,25 @@ def test_the_cache_reads_once_serves_the_old_copy_while_refreshing_and_invalidat
     assert len(cache.get()) == 3 and repo.reads == 2                             # fresh again: no read
     cache.invalidate()
     assert len(cache.get()) == 4 and repo.reads == 3                             # a demo movie changed: the next request waits and sees it
+
+
+def test_a_refresh_that_reads_the_same_catalog_keeps_the_same_list_and_a_changed_one_replaces_it():
+    repo, clock = CountingRepo([{"_id": 1, "title": "A", "genres": "Drama", "support": 1}, {"_id": 2, "title": "B", "genres": "Drama", "support": 1}]), Clock()
+    cache = CatalogCache(repo, 9_000_000, clock=clock)
+    first = cache.get()
+    search(first, None, {}, sort="title", assume_sorted=True, orders=cache.orders)   # an order built from this list
+    clock.now += 31
+    cache.get()
+    cache.wait()
+    assert repo.reads == 2 and cache.get() is first                                  # same content: the same object, so the sorted orders built from it stay valid
+    assert len(cache.orders._orders) == 1
+    repo.docs.append({"_id": 3, "title": "C", "genres": "Drama", "support": 1})
+    clock.now += 31
+    cache.get()
+    cache.wait()
+    changed = cache.get()
+    assert changed is not first and [e.movie_id for e in changed] == [1, 2, 3]
+    assert not cache.orders._orders                                                  # the old list is not kept alive by the orders built from it
 
 
 def test_a_failed_background_refresh_keeps_the_old_copy_and_retries_soon():
@@ -296,12 +323,33 @@ def test_concurrent_requests_for_one_order_build_it_once():
     assert len(built) == 1 and len(results) == 4 and all(r is results[0] for r in results)
 
 
-def test_the_number_of_kept_orders_is_bounded():
+def test_the_number_of_kept_orders_is_bounded_and_the_oldest_goes_first():
     orders = OrderCache()
     sources = (object(),)
-    for i in range(MAX_ORDERS * 3):                                                  # m comes from configuration, but never let keys pile up
+    total = MAX_ORDERS * 3 + 5                                                       # not a multiple of the bound: "clear everything when full" would end at 5, not at the bound
+    for i in range(total):                                                           # m comes from configuration, but never let keys pile up
         orders.get(("wr", True, float(i), 3.5, True), sources, lambda: [])
-    assert len(orders._orders) <= MAX_ORDERS
+    assert len(orders._orders) == MAX_ORDERS
+    assert ("wr", True, float(total - 1), 3.5, True) in orders._orders               # the newest is kept: the hot order is not thrown away with the rest
+    assert ("wr", True, 0.0, 3.5, True) not in orders._orders
+
+
+def test_orders_of_an_older_catalog_are_dropped_when_a_newer_one_is_built():
+    class Generation(list):                                                          # a list subclass can be weakly referenced
+        pass
+
+    orders = OrderCache()
+    older, newer = Generation([1]), Generation([2])
+    deltas = {}
+    orders.get(("title", False), (older,), lambda: ["t"])
+    orders.get(("ratings", True), (older, deltas), lambda: ["r"])
+    ref = weakref.ref(older)
+    del older
+    assert ref() is not None                                                         # still pinned by the two orders built from it
+    orders.get(("title", False), (newer,), lambda: ["t2"])                           # the catalog was replaced: one new order is enough
+    gc.collect()
+    assert ref() is None                                                             # nothing keeps the old catalog alive
+    assert set(orders._orders) == {("title", False)} and orders._orders[("title", False)][0][0] is newer
 
 
 # ---- CatalogCache: a failed thread start, invalidate during a refresh ---------------------------------------------------------
@@ -323,6 +371,7 @@ def test_a_refresh_thread_that_cannot_start_does_not_leave_the_catalog_locked(mo
         patch.setattr(catalog_module.threading, "Thread", NoThread)
         assert len(cache.get()) == 1                                                 # the previous copy is served, no error
     assert "could not start" in caplog.text
+    cache.wait()                                                                     # no half-started worker is left to join
     assert cache._lock.acquire(blocking=False)                                       # not held forever
     cache._lock.release()
     repo.docs.append({"_id": 2, "title": "B", "genres": "Drama", "support": 1})

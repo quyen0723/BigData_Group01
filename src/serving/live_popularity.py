@@ -99,9 +99,10 @@ class LivePopularity:
             self._lock.release()
 
     def snapshot(self) -> tuple[BaselineStats, dict] | None:
-        """The baseline and the ledger deltas, with the same caching as the popular list (a TTL, and a reader that already has a recent answer
-        never queues behind a refresh), for pages that list every movie (the catalog search). Never raises; None when there is no baseline or
-        reading it failed and nothing recent is available (the caller then has no averages). The same objects come back while nothing changed."""
+        """The baseline and the ledger deltas, with the same caching as the popular list (a TTL, and a reader that already has a recent statistics
+        answer never queues behind a refresh; a cached "no statistics" is served inside the TTL only), for pages that list every movie (the catalog
+        search). Never raises; None when there is no baseline or reading it failed and nothing recent is available (the caller then has no
+        averages). The same objects come back while nothing changed."""
         hit = self._snapshot
         if hit is not None and self._clock() < hit[0]:
             return hit[2]

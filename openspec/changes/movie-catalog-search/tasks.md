@@ -38,12 +38,20 @@
 - [x] 7.1 `docs/TESTING_GUIDE.md`: mục "Test case qua giao diện" dùng ô tìm (các case kiểm hành vi hệ thống, kỳ vọng đã đo); README một dòng; `web/README.md` ghi hai thành phần mới (TESTING_GUIDE mục "Test case kiểm hành vi hệ thống qua giao diện", README dòng "Movie search", web/README mục Layout)
 - [x] 7.2 Hoàn thiện `evidence/p2_movie_search.txt` (mục 4: review và số đo sau khi sửa); `openspec validate movie-catalog-search --strict` pass; commit và push chỉ khi người dùng yêu cầu
 
-## 8. Sửa sau review độc lập
+## 8. Sửa sau review độc lập (lần 1)
 
-- [x] 8.1 Cao: `OrderCache` (mỗi thứ tự sắp xếp tính một lần cho mỗi ảnh chụp dữ liệu, một lần tại một thời điểm); `/movies?sort=wr` 0,6–1,6 s xuống 13–20 ms, `/recommendations` dưới bốn tìm kiếm song song 0,8–1,8 s xuống 0,1–0,28 s
+- [x] 8.1 Cao: `OrderCache` (mỗi thứ tự sắp xếp tính một lần cho mỗi ảnh chụp dữ liệu, một lần tại một thời điểm); `/movies?sort=wr` 0,6–1,6 s xuống trung vị 22 ms (một vòng 0,12 s lúc làm mới danh mục nền; xem 9.1), `/recommendations` dưới bốn tìm kiếm song song 0,8–1,8 s xuống 0,1–0,28 s
 - [x] 8.2 Cao: `snapshot()` có cache theo TTL và đường không chặn như `get()`; `_ledger_deltas` giữ nguyên đối tượng khi nội dung không đổi
 - [x] 8.3 Cao: luồng làm mới không khởi động được thì nhả khoá (trước đó khoá bị giữ vĩnh viễn và `invalidate()` treo)
-- [x] 8.4 Vừa: `invalidate()` không chờ lần đọc đang chạy (bộ đếm thế hệ); `search()` từ chối `page` và `size` nhỏ hơn 1; log khi làm mới lỗi
+- [x] 8.4 Vừa: `invalidate()` không chờ lần đọc đang chạy (bộ đếm thế hệ); `search()` từ chối `page` và `size` nhỏ hơn 1 (chỉ củng cố cho nơi gọi khác: qua API, FastAPI `ge=1` đã trả 422); log khi làm mới lỗi
 - [x] 8.5 Vừa: bảng admin về trang 1 lúc render (không gửi yêu cầu bộ lọc mới với trang cũ), luôn hiện lỗi kể cả sau lần tải đầu thành công, tự về sắp theo số rating khi server trả 422, một nguồn cho số trang, cắt khoảng trắng của ô tìm; không thử lại lỗi 4xx; ô tìm user báo khi tên một ký tự bị bỏ qua vì đã chọn thể loại; items được memo hoá; danh sách tìm không tải lại mọi trang khi quay lại tab
 - [x] 8.6 Vừa: `trainRatings` và `newRatings` là số đếm (0, không `null`): sửa spec và design cho khớp code và test
 - [x] 8.7 Test: `assume_sorted` (chế độ duy nhất API dùng) cho quy tắc hoà; so với tính brute force ở ba chế độ; `OrderCache` (dùng lại, tính lại khi dữ liệu đổi, đồng thời, giới hạn); thread không khởi động được; `invalidate()` trong lúc làm mới; snapshot (TTL, lỗi, không chờ); 12 đột biến backend đều bị bắt, 6 trong 7 đột biến frontend bị bắt (còn một khung hình lỗi thoáng qua chưa có test, xem evidence mục 4)
+
+## 9. Sửa sau review độc lập (lần 2)
+
+- [x] 9.1 Cao: `OrderCache` ghim mỗi thế hệ danh mục (43 MB), mỗi lần làm mới nền tạo danh sách mới dù nội dung giống hệt (đo: 386 MB sau 8 lần): làm mới giữ nguyên đối tượng danh sách khi nội dung không đổi; xoá các thứ tự khi công bố danh sách khác; lưu thứ tự mới thì bỏ thứ tự dựng từ danh sách khác; đầy thì bỏ cái cũ nhất. Sau sửa: 43,0 đến 47,9 MB (nội dung giống hệt) và 42,3 MB phẳng (nội dung đổi mỗi lần). Đo 80 giây qua hai mốc làm mới: bản cuối: `sort=wr` trung vị 22 ms, 1 trong 52 vòng chậm hơn 0,1 s (0,12 s lúc làm mới nền); lần đo trước đó khi máy bận: trung vị 38 ms, 5 trong 51 vòng 0,11–0,58 s
+- [x] 9.2 Vừa: test `cached_order` thật sự dùng cache (một `{}` dùng chung, đếm số lần dựng); tài liệu nói đúng việc tuần tự hoá các lần dựng; test snapshot đặt đúng tên và docstring nói rõ chỉ kết quả "không có thống kê" trong TTL mới không cần khoá
+- [x] 9.3 Thấp: `_worker` gán trước `start()` và đặt lại None khi luồng không khởi động; fallback 422 trả chiều sắp xếp về mặc định; tiêu đề và thanh trang cùng dùng số trang của các dòng đang hiện
+- [x] 9.4 Tài liệu: sửa các con số và câu sai mà review chỉ ra (bộ nhớ, độ trễ, "sắp xếp một lần", `page`/`size` không tới được từ API); `evidence/p2_movie_search.txt` mục 5
+- [x] 9.5 Test: 367 pytest, 219 Vitest; đột biến backend 5/5 và frontend 3/3 bị bắt (một đột biến sống sót lần đầu vì chính test trùng hợp ngẫu nhiên: 48 = 3 x 16, đã đổi thành 53 phần tử)

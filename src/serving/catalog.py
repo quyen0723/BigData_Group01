@@ -123,12 +123,22 @@ def _same(a: tuple, b: tuple) -> bool:
 class OrderCache:
     """The whole catalog in one sort order, kept for as long as the objects it was computed from are the same ones: the entries (CatalogCache
     replaces its list when it re-reads), the baseline and the ledger deltas (LivePopularity hands out the same objects while nothing changed).
-    One order is built at a time; a request that needs the same one waits for it and reuses it, so concurrent searches do not each sort 87k
-    entries (measured: four of them slowed /recommendations from 50 ms to over a second)."""
+    Builds are serialised (one at a time, for any order): concurrent searches would otherwise each burn the CPU for 0.05-0.2 s and slow the other
+    endpoints (measured: four of them slowed /recommendations from 50 ms to over a second), so a request for another order may wait for the build
+    in progress, and one for the same order reuses its result.
+
+    Memory: `sources[0]` is the catalog entries list (about 43 MB for 87k entries, the only large source). CatalogCache calls `clear()` when it
+    publishes a different list, and storing an order drops every order built from another entries list (a request that was still using the old
+    list), so older generations do not pile up (before this, up to 16 of them: measured 386 MB after 8 refreshes). When the number of orders
+    is at the bound the oldest one goes, not all of them."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._orders: dict[Hashable, tuple[tuple, list[CatalogEntry]]] = {}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._orders.clear()
 
     def get(self, key: Hashable, sources: tuple, build: Callable[[], list[CatalogEntry]]) -> list[CatalogEntry]:
         hit = self._orders.get(key)
@@ -139,8 +149,12 @@ class OrderCache:
             if hit is not None and _same(hit[0], sources):
                 return hit[1]
             ordered = build()
-            if key not in self._orders and len(self._orders) >= MAX_ORDERS:
-                self._orders.clear()
+            entries = sources[0]
+            for stale in [k for k, (src, _o) in self._orders.items() if src[0] is not entries]:
+                del self._orders[stale]
+            self._orders.pop(key, None)                                  # re-inserted below as the newest
+            if len(self._orders) >= MAX_ORDERS:
+                del self._orders[next(iter(self._orders))]
             self._orders[key] = (sources, ordered)
             return ordered
 
@@ -236,11 +250,18 @@ class CatalogCache:
 
     def _load(self) -> list[CatalogEntry]:
         gen = self._gen
+        previous = self._entries                                   # only _load and invalidate() change it, and _load runs under _lock
         entries = sorted((make_entry(doc, self._demo_start) for doc in self._repo.get_catalog()), key=lambda e: e.movie_id)
+        if previous is not None and entries == previous:
+            entries = previous                                     # the same catalog: keep the object, so the sorted orders built from it stay valid
+        replaced = False
         with self._state:
             if gen == self._gen:                                  # invalidate() was not called while reading: this copy may be the cached one
+                replaced = entries is not previous
                 self._entries = entries
                 self._read_at = self._clock()
+        if replaced:
+            self.orders.clear()                                    # the orders built from the old list are dead: do not keep it alive through them
         return entries
 
     def _start_refresh(self) -> None:
@@ -248,13 +269,13 @@ class CatalogCache:
         stay held forever, or the catalog would never refresh again and invalidate() / the next cold read would hang."""
         try:
             worker = threading.Thread(target=self._refresh_in_background, daemon=True)
+            self._worker = worker                                  # before start(): wait() must never join an older, finished worker
             worker.start()
         except Exception as exc:  # noqa: BLE001
+            self._worker = None
             self._read_at = self._clock() - self._ttl + min(5.0, self._ttl)
             self._lock.release()
             log.warning("catalog refresh could not start (%s: %s); serving the previous copy", type(exc).__name__, exc)
-            return
-        self._worker = worker
 
     def _refresh_in_background(self) -> None:
         try:

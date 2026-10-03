@@ -84,11 +84,19 @@ The catalog (id, title, genres, support) SHALL be read from the `movies` collect
 - **THEN** the `movies` collection is read once
 
 ### Requirement: A search does not sort the catalog
-The whole catalog in each sort order SHALL be computed once and kept for as long as the data it was computed from is the same: the catalog entries, the baseline and the ledger counts. A search SHALL only filter that order and take its page, so a search costs time in proportion to the filter, not to sorting 87 thousand movies. A refresh of the catalog, a rating counted from the ledger, or a demo movie created or deleted SHALL make the next search that needs the order compute it again. Only one computation of an order SHALL run at a time; requests that need the same order wait for it and reuse it. The number of orders kept SHALL be bounded.
+The whole catalog in each sort order SHALL be computed once and kept for as long as the data it was computed from is the same: the catalog entries, the baseline and the ledger counts. A search SHALL only filter that order and take its page, so a search costs time in proportion to the filter, not to sorting 87 thousand movies. A change in the catalog content (a demo movie created or deleted, an edit in Mongo) or a rating counted from the ledger SHALL make the next search that needs the order compute it again; a background refresh that reads the same catalog content SHALL keep the existing list, so the sorted orders stay valid. Computations of orders SHALL be serialised, one at a time (a request that needs another order may wait for the one in progress, and a request for the same order reuses it). The number of orders kept SHALL be bounded, and a catalog list that has been replaced SHALL not be kept in memory by the orders built from it, so at most one generation of the catalog is held.
 
 #### Scenario: Searches on unchanged data
 - **WHEN** ten searches with different words and the same sort arrive while no rating is applied
 - **THEN** the catalog is sorted once
+
+#### Scenario: A refresh that reads the same catalog
+- **WHEN** the catalog is refreshed after 30 seconds and its content has not changed
+- **THEN** the sorted orders are not computed again
+
+#### Scenario: Memory across refreshes
+- **WHEN** the catalog content changes at every refresh (a demo movie added each time) and searches ask for different sort orders
+- **THEN** only the current catalog list is held, not one list per refresh (measured: 42 MB flat over 8 refreshes, against 386 MB before)
 
 #### Scenario: A rating arrives
 - **WHEN** a rating is applied between two searches that sort by `ratings`, `avg` or `wr`

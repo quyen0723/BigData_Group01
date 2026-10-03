@@ -432,9 +432,9 @@ def test_a_snapshot_reader_with_a_recent_answer_does_not_wait_for_a_slow_refresh
     refresher.join(5)
 
 
-def test_a_cached_snapshot_without_a_baseline_is_served_while_the_lock_is_held():
+def test_a_snapshot_inside_its_ttl_is_served_without_taking_the_lock_even_when_it_says_no_statistics():
     repo, clock, live = make(FakeServingRepository(movies=MOVIES))
-    assert live.snapshot() is None                                                   # cached as "no statistics" for one TTL
+    assert live.snapshot() is None                                                   # cached as "no statistics" for one TTL (the clock does not move)
     answers = []
     with live._lock:                                                                 # e.g. a popular-list refresh is in progress
         reader = threading.Thread(target=lambda: answers.append(live.snapshot()))
