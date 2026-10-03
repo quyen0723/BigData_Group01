@@ -109,6 +109,18 @@ describe('user page movie search', () => {
     expect(screen.getByText('Tìm thấy 2 phim.')).toBeInTheDocument()
   })
 
+  it('says a one-letter title is not used when a genre is selected, instead of ignoring it silently', async () => {
+    const api = mount({ movies: () => movieList([SHANE]) })
+    await userEvent.selectOptions(await screen.findByLabelText('Thể loại'), 'Western')
+    await userEvent.type(await field(), 's')
+    expect(await screen.findByText(/Tên phim cần ít nhất 2 ký tự nên chưa được dùng để lọc/)).toBeInTheDocument()
+    expect(await screen.findByText('Shane')).toBeInTheDocument()
+    expect(searchCalls(api).every((c) => !new URLSearchParams(c.path.split('?')[1]).has('q'))).toBe(true)
+    await userEvent.type(await field(), 'h') // two letters: the title is used and the note goes away
+    await waitFor(() => expect(screen.queryByText(/chưa được dùng để lọc/)).toBeNull())
+    await waitFor(() => expect(new URLSearchParams(searchCalls(api).at(-1)!.path.split('?')[1]).get('q')).toBe('sh'))
+  })
+
   it('lists a genre on its own, without a title', async () => {
     const api = mount({ movies: () => movieList([SHANE]) })
     await userEvent.selectOptions(await screen.findByLabelText('Thể loại'), 'Western')

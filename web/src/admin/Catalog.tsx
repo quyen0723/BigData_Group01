@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
-import type { MovieSort } from '@/shared/api/client'
+import { ApiError, type MovieSort } from '@/shared/api/client'
 import { useMovies } from '@/shared/hooks/queries'
 import { GENRE_NAMES } from '@/shared/lib/genre'
 import { cn } from '@/shared/lib/utils'
@@ -46,19 +46,29 @@ export function Catalog() {
   const [sort, setSort] = useState<MovieSort>('ratings')
   const [order, setOrder] = useState<'asc' | 'desc' | null>(null)
   const [page, setPage] = useState(1)
-  const q = useDebounced(text, SEARCH_DELAY_MS)
+  const q = useDebounced(text.trim(), SEARCH_DELAY_MS)
 
-  useEffect(() => setPage(1), [q, genre, sort, order])
+  // A new search, filter or sort starts at page 1. Done while rendering, not in an effect: an effect would run after the query had already
+  // been sent for the new filter with the old page number.
+  const filterKey = `${q}\u0000${genre}\u0000${sort}\u0000${order ?? ''}`
+  const [seenKey, setSeenKey] = useState(filterKey)
+  if (seenKey !== filterKey) {
+    setSeenKey(filterKey)
+    setPage(1)
+  }
 
   const query = useMovies({ q, genre: genre || null, sort, order, page, size: PAGE_SIZE })
   const data = query.data
   const direction = effectiveOrder(sort, order)
-  const noStats = data != null && !data.hasStats
+  const needsStats = sort === 'avg' || sort === 'wr'
+  // The server answers 422 for avg / wr when the statistics are not loaded (and the table may still show a page from before they went away).
+  const statsGone = query.error instanceof ApiError && query.error.status === 422 && needsStats
+  const noStats = (data != null && !data.hasStats) || statsGone
 
-  // The server answers 422 for avg / wr when there is no baseline; fall back to the rating count instead of showing an error.
+  // Fall back to the rating count instead of leaving the table on an error.
   useEffect(() => {
-    if (noStats && (sort === 'avg' || sort === 'wr')) setSort('ratings')
-  }, [noStats, sort])
+    if (noStats && needsStats) setSort('ratings')
+  }, [noStats, needsStats])
 
   const DirectionIcon = direction === 'desc' ? ArrowDown : ArrowUp
 
@@ -70,7 +80,7 @@ export function Catalog() {
         </h2>
         {data && (
           <p className="text-sm text-muted-foreground" aria-live="polite">
-            {number(data.total)} phim{data.pages > 0 ? ` · trang ${data.page}/${number(data.pages)}` : ''}
+            {number(data.total)} phim{data.pages > 0 ? ` · trang ${page}/${number(data.pages)}` : ''}
           </p>
         )}
       </div>
@@ -123,9 +133,10 @@ export function Catalog() {
         </Button>
       </div>
 
-      {query.isError && !data && (
+      {query.isError && !statsGone && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-destructive">
           Không tải được danh mục phim.
+          {data && <span className="text-sm">Bảng bên dưới là lần tải trước, số liệu có thể đã cũ.</span>}
           <Button type="button" variant="outline" onClick={() => void query.refetch()}>
             Thử lại
           </Button>

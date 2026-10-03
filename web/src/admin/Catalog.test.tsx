@@ -1,7 +1,8 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Providers } from '@/shared/providers'
+import { makeQueryClient, Providers } from '@/shared/providers'
 import { installFakeApi } from '@/test/fakeApi'
 import { Catalog } from './Catalog'
 import { movieList, movieRow } from './fixtures'
@@ -18,7 +19,7 @@ function params(path: string) {
   return new URLSearchParams(path.split('?')[1] ?? '')
 }
 
-function setup(reply: (p: URLSearchParams) => Reply = () => movieList([PULP, NEW_FILM, DEMO])) {
+function setup(reply: (p: URLSearchParams) => Reply = () => movieList([PULP, NEW_FILM, DEMO]), client?: QueryClient) {
   const api = installFakeApi([
     [
       /^GET \/movies\?/,
@@ -29,9 +30,15 @@ function setup(reply: (p: URLSearchParams) => Reply = () => movieList([PULP, NEW
     ],
   ])
   render(
-    <Providers>
-      <Catalog />
-    </Providers>,
+    client ? (
+      <QueryClientProvider client={client}>
+        <Catalog />
+      </QueryClientProvider>
+    ) : (
+      <Providers>
+        <Catalog />
+      </Providers>
+    ),
   )
   return api
 }
@@ -85,6 +92,16 @@ describe('searching, filtering and sorting', () => {
     expect(api.callsTo(/q=p&|q=pu&|q=pul&/)).toHaveLength(0)
   })
 
+  it('does not search again for a space typed after the word', async () => {
+    const api = setup()
+    await screen.findByText('Pulp Fiction (1994)')
+    await userEvent.type(screen.getByLabelText('Tìm theo tên'), 'pulp')
+    await waitFor(() => expect(api.callsTo(/q=pulp/)).toHaveLength(1), { timeout: 3000 })
+    await userEvent.type(screen.getByLabelText('Tìm theo tên'), ' ')
+    await new Promise((r) => setTimeout(r, 450)) // longer than the pause
+    expect(api.callsTo(/q=pulp/)).toHaveLength(1) // "pulp " and "pulp" are the same search
+  })
+
   it('filters by genre and sorts by the average, then reverses the direction', async () => {
     const api = setup()
     await screen.findByText('Pulp Fiction (1994)')
@@ -117,7 +134,7 @@ describe('searching, filtering and sorting', () => {
 describe('paging', () => {
   const many = (p: URLSearchParams) => {
     const page = Number(p.get('page'))
-    return movieList([movieRow(page * 10, { title: `Page ${page} movie` })], { total: 45, page, pages: 3 })
+    return movieList([movieRow(page * 10, { title: `Page ${page} movie` })], { total: 87, page, pages: 3 })
   }
 
   it('goes forward and back, and Trước is off on the first page', async () => {
@@ -128,6 +145,7 @@ describe('paging', () => {
     expect(await screen.findByText('Page 2 movie')).toBeInTheDocument()
     expect(lastParams(api).get('page')).toBe('2')
     expect(screen.getByText('Trang 2 / 3')).toBeInTheDocument()
+    expect(screen.getByText('87 phim · trang 2/3')).toBeInTheDocument() // the heading agrees with the pager
     await userEvent.click(screen.getByRole('button', { name: 'Sau' }))
     expect(await screen.findByText('Page 3 movie')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sau' })).toBeDisabled()
@@ -143,6 +161,8 @@ describe('paging', () => {
     await userEvent.selectOptions(screen.getByLabelText('Thể loại'), 'Drama')
     await waitFor(() => expect(lastParams(api).get('genre')).toBe('Drama'))
     await waitFor(() => expect(lastParams(api).get('page')).toBe('1'))
+    // the new genre was never asked for together with the old page number (it would be a wasted scan of the whole catalog)
+    expect(api.callsTo(/genre=Drama/).filter((c) => params(c.path).get('page') !== '1')).toHaveLength(0)
   })
 
   it('has no pager for a single page', async () => {
@@ -169,5 +189,35 @@ describe('empty and failing', () => {
     })
     expect(await screen.findByText('Pulp Fiction (1994)')).toBeInTheDocument()
     expect(api.callsTo(/^GET \/movies\?/).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('still shows the failure when a refresh fails after the table has loaded once, and keeps the old rows under it', async () => {
+    let fail = false
+    const client = makeQueryClient()
+    client.setDefaultOptions({ queries: { ...client.getDefaultOptions().queries, staleTime: 0, retry: false } })
+    setup(() => (fail ? { status: 500, body: { detail: 'boom' } } : movieList([PULP])), client)
+    await screen.findByText('Pulp Fiction (1994)')
+    fail = true
+    act(() => {
+      window.dispatchEvent(new Event('visibilitychange')) // the tab is shown again: the table refreshes
+    })
+    const alert = (await screen.findByText('Không tải được danh mục phim.')).closest('[role="alert"]')!
+    expect(alert).toHaveTextContent('số liệu có thể đã cũ')
+    expect(screen.getByText('Pulp Fiction (1994)')).toBeInTheDocument()
+    fail = false
+    await act(async () => {
+      await userEvent.click(within(alert as HTMLElement).getByRole('button', { name: 'Thử lại' }))
+    })
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
+
+  it('falls back to the rating count when the server says the statistics are not available, without an error or a second try', async () => {
+    const api = setup((p) => (p.get('sort') === 'avg' ? { status: 422, body: { detail: 'average rating and WR are not available' } } : movieList([PULP])))
+    await screen.findByText('Pulp Fiction (1994)')
+    await userEvent.selectOptions(screen.getByLabelText('Sắp xếp theo'), 'avg')
+    await waitFor(() => expect(screen.getByLabelText('Sắp xếp theo')).toHaveValue('ratings'))
+    expect(await screen.findByText('Pulp Fiction (1994)')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(api.callsTo(/sort=avg/)).toHaveLength(1) // a 422 is a final answer: not asked again
   })
 })

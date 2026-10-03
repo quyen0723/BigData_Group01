@@ -9,8 +9,8 @@
 
 ## 3. Backend
 
-- [x] 3.1 Repository: `get_catalog()` (đọc `movies`: id, title, genres, support, addedAt) vào Protocol và `FakeServingRepository`; lớp giữ danh mục 30 giây, làm mới ngay khi tạo hoặc xoá phim demo (`create_movie`, `delete_movie`) (`get_catalog`, `CatalogCache` sắp xếp một lần và làm mới nền, làm mới ngay khi tạo/xoá phim demo)
-- [x] 3.2 `LivePopularity.snapshot()`: trả (baseline, deltas, m) dùng chung cache, không bao giờ ném lỗi, `None` khi thiếu baseline (`LivePopularity.snapshot()`)
+- [x] 3.1 Repository: `get_catalog()` (đọc `movies`: id, title, genres, support; `isDemo` suy ra từ dải id) vào Protocol và `FakeServingRepository`; lớp giữ danh mục 30 giây, làm mới ngay khi tạo hoặc xoá phim demo (`create_movie`, `delete_movie`) (`get_catalog`, `CatalogCache` sắp xếp một lần và làm mới nền, làm mới ngay khi tạo/xoá phim demo)
+- [x] 3.2 `LivePopularity.snapshot()`: trả (baseline, deltas) dùng chung cache (`m` lấy từ cấu hình `popularity`), không bao giờ ném lỗi, `None` khi thiếu baseline (`LivePopularity.snapshot()`)
 - [x] 3.3 Route `GET /movies` trong `src/api/main.py` (gate `require_demo`, tham số theo D-4, 422 khi sai, 422 riêng khi sắp theo `avg`/`wr` mà không có số liệu) và các model trong `schemas.py` (`GET /movies`, 404 trước 422; sắp theo avg/wr khi thiếu baseline trả 422 kèm lý do)
 - [x] 3.4 pytest cho từng scenario của `specs/movie-catalog`: tìm, từng từ, thể loại, gate (404 trước 422), tham số sai, số liệu, phim ra sau cutoff, không baseline, sắp xếp, phân trang, phim demo thấy ngay, một lần đọc cho 30 lần tìm (`tests/unit/test_movies_search_api.py` 19 test, 4 đột biến bị bắt; pytest 349)
 - [x] 3.5 Sinh lại `schema.d.ts` bằng `npm run gen:api` (API đã restart) và kiểm `tsc` (sinh lại bằng `npm run gen:api`, `tsc` sạch)
@@ -31,9 +31,19 @@
 
 - [x] 6.1 Restart `api`, so kết quả `GET /movies` với số đo mốc 1.1 ("pulp", Western, 10 phim nhiều rating nhất); đo thời gian tìm và sắp xếp (mục tiêu dưới 150 ms sau lần nạp đầu) (số liệu khớp mốc; tìm 40–80 ms, sắp xếp toàn bộ 130–250 ms; xem evidence mục 2)
 - [x] 6.2 Dựng lại image `api`, kiểm trên trình duyệt: admin tìm "pulp", lọc Western, sắp xếp, đổi trang; trang user tìm "pulp" rồi chấm; phim thêm bằng admin tìm thấy ngay (admin: 87,585 phim, tìm "pulp" ra 4, Western 1,696; `/app`: ô tìm trên "Dành cho bạn", "pulp" ra 4 thẻ, Pulp Fiction hiện "Bạn đã chấm 4,5 sao", không từ kỹ thuật)
-- [ ] 6.3 Toàn bộ pytest và Vitest pass, không test bị skip hay rỗng; review độc lập (code-reviewer, chỉ đọc) và xử lý các điểm cần sửa
+- [x] 6.3 Toàn bộ pytest và Vitest pass, không test bị skip hay rỗng; review độc lập (code-reviewer, chỉ đọc) và xử lý các điểm cần sửa (review: 3 cao, 8 vừa, 9 thấp, 5 lệch tài liệu; xử lý ở mục 8; pytest 365, Vitest 217)
 
 ## 7. Tài liệu
 
-- [ ] 7.1 `docs/TESTING_GUIDE.md`: mục "Test case qua giao diện" dùng ô tìm (các case kiểm hành vi hệ thống, kỳ vọng đã đo); README một dòng; `web/README.md` ghi hai thành phần mới
-- [ ] 7.2 Hoàn thiện `evidence/p2_movie_search.txt`; `openspec validate movie-catalog-search --strict` pass; commit và push chỉ khi người dùng yêu cầu
+- [x] 7.1 `docs/TESTING_GUIDE.md`: mục "Test case qua giao diện" dùng ô tìm (các case kiểm hành vi hệ thống, kỳ vọng đã đo); README một dòng; `web/README.md` ghi hai thành phần mới (TESTING_GUIDE mục "Test case kiểm hành vi hệ thống qua giao diện", README dòng "Movie search", web/README mục Layout)
+- [x] 7.2 Hoàn thiện `evidence/p2_movie_search.txt` (mục 4: review và số đo sau khi sửa); `openspec validate movie-catalog-search --strict` pass; commit và push chỉ khi người dùng yêu cầu
+
+## 8. Sửa sau review độc lập
+
+- [x] 8.1 Cao: `OrderCache` (mỗi thứ tự sắp xếp tính một lần cho mỗi ảnh chụp dữ liệu, một lần tại một thời điểm); `/movies?sort=wr` 0,6–1,6 s xuống 13–20 ms, `/recommendations` dưới bốn tìm kiếm song song 0,8–1,8 s xuống 0,1–0,28 s
+- [x] 8.2 Cao: `snapshot()` có cache theo TTL và đường không chặn như `get()`; `_ledger_deltas` giữ nguyên đối tượng khi nội dung không đổi
+- [x] 8.3 Cao: luồng làm mới không khởi động được thì nhả khoá (trước đó khoá bị giữ vĩnh viễn và `invalidate()` treo)
+- [x] 8.4 Vừa: `invalidate()` không chờ lần đọc đang chạy (bộ đếm thế hệ); `search()` từ chối `page` và `size` nhỏ hơn 1; log khi làm mới lỗi
+- [x] 8.5 Vừa: bảng admin về trang 1 lúc render (không gửi yêu cầu bộ lọc mới với trang cũ), luôn hiện lỗi kể cả sau lần tải đầu thành công, tự về sắp theo số rating khi server trả 422, một nguồn cho số trang, cắt khoảng trắng của ô tìm; không thử lại lỗi 4xx; ô tìm user báo khi tên một ký tự bị bỏ qua vì đã chọn thể loại; items được memo hoá; danh sách tìm không tải lại mọi trang khi quay lại tab
+- [x] 8.6 Vừa: `trainRatings` và `newRatings` là số đếm (0, không `null`): sửa spec và design cho khớp code và test
+- [x] 8.7 Test: `assume_sorted` (chế độ duy nhất API dùng) cho quy tắc hoà; so với tính brute force ở ba chế độ; `OrderCache` (dùng lại, tính lại khi dữ liệu đổi, đồng thời, giới hạn); thread không khởi động được; `invalidate()` trong lúc làm mới; snapshot (TTL, lỗi, không chờ); 12 đột biến backend đều bị bắt, 6 trong 7 đột biến frontend bị bắt (còn một khung hình lỗi thoáng qua chưa có test, xem evidence mục 4)

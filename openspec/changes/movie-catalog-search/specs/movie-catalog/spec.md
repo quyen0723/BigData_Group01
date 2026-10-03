@@ -24,7 +24,7 @@ The API SHALL provide `GET /movies` that lists the movies of the catalog (includ
 - **THEN** the API answers 422
 
 ### Requirement: Rating statistics on every row
-`ratings` SHALL be the movie's stored `support` plus the ratings counted from the ledger since the baseline (a demo movie starts at 0). `trainRatings`, `newRatings`, `avgRating` and `wr` SHALL come from the same baseline-plus-ledger statistics as the popular list, with the configured `m` and the baseline's `C`; they SHALL be `null` for a movie that has no rating in the baseline or the ledger. When there is no baseline, `hasStats` SHALL be false, `avgRating` and `wr` SHALL be `null` for every row, and searching, filtering and sorting by `title` or `ratings` SHALL still work.
+`ratings` SHALL be the movie's stored `support` plus the ratings counted from the ledger since the baseline (a demo movie starts at 0). `trainRatings`, `newRatings`, `avgRating` and `wr` SHALL come from the same baseline-plus-ledger statistics as the popular list, with the configured `m` and the baseline's `C`. `trainRatings` and `newRatings` are counts and SHALL be 0 when the movie has none; `avgRating` and `wr` SHALL be `null` for a movie that has no rating in the baseline or the ledger. The statistics SHALL be read once per statistics cache time for all searches, and a search that already has statistics younger than 60 seconds SHALL NOT wait for a refresh in progress. When there is no baseline, `hasStats` SHALL be false, `avgRating` and `wr` SHALL be `null` for every row, and searching, filtering and sorting by `title` or `ratings` SHALL still work.
 
 #### Scenario: A movie with statistics
 - **WHEN** the list contains Shawshank Redemption
@@ -32,7 +32,11 @@ The API SHALL provide `GET /movies` that lists the movies of the catalog (includ
 
 #### Scenario: A movie newer than the training split
 - **WHEN** a movie has a `support` but no rating before the cutoff and none in the ledger
-- **THEN** its `ratings` is its support, and `trainRatings`, `avgRating` and `wr` are null
+- **THEN** its `ratings` is its support, `trainRatings` and `newRatings` are 0, and `avgRating` and `wr` are null
+
+#### Scenario: A search does not wait for a statistics refresh
+- **WHEN** the statistics are being refreshed (a slow ledger read) and the previous ones are younger than 60 seconds
+- **THEN** a search is answered with the previous ones at once
 
 #### Scenario: No baseline
 - **WHEN** `movie_stats` is missing
@@ -67,6 +71,29 @@ The catalog (id, title, genres, support) SHALL be read from the `movies` collect
 - **WHEN** a search arrives 31 seconds after the catalog was read
 - **THEN** it is answered from the previous copy and the collection is read again in the background
 
+#### Scenario: A refresh that cannot start
+- **WHEN** the background refresh cannot be started (no thread available)
+- **THEN** the previous copy is still served, nothing stays locked, and the next request a few seconds later tries again
+
+#### Scenario: A demo movie is added while a refresh is reading
+- **WHEN** a demo movie is created or deleted while the background refresh is in the middle of reading the collection
+- **THEN** the request that created or deleted it is not held up by the read, the read that was in progress is not kept (it may predate the change), and the next search sees the change
+
 #### Scenario: Many searches, one read
 - **WHEN** 30 searches arrive within 10 seconds
 - **THEN** the `movies` collection is read once
+
+### Requirement: A search does not sort the catalog
+The whole catalog in each sort order SHALL be computed once and kept for as long as the data it was computed from is the same: the catalog entries, the baseline and the ledger counts. A search SHALL only filter that order and take its page, so a search costs time in proportion to the filter, not to sorting 87 thousand movies. A refresh of the catalog, a rating counted from the ledger, or a demo movie created or deleted SHALL make the next search that needs the order compute it again. Only one computation of an order SHALL run at a time; requests that need the same order wait for it and reuse it. The number of orders kept SHALL be bounded.
+
+#### Scenario: Searches on unchanged data
+- **WHEN** ten searches with different words and the same sort arrive while no rating is applied
+- **THEN** the catalog is sorted once
+
+#### Scenario: A rating arrives
+- **WHEN** a rating is applied between two searches that sort by `ratings`, `avg` or `wr`
+- **THEN** the second search computes the order again, and its rows carry the new numbers
+
+#### Scenario: Concurrent searches do not slow the recommendations
+- **WHEN** four searches sorted by `wr` run at the same time as `/recommendations` requests
+- **THEN** the recommendations are not slowed to over half a second (measured before the change: 0.8 to 1.8 s instead of 50 ms)

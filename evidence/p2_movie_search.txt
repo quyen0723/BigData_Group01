@@ -24,3 +24,48 @@ User page: "Tim phim de cham" above the recommendations (2 characters or a genre
 Found by the tests: a toast about a rating given to a search result said "phim nay" instead of the title, because titles were only remembered for recommended movies; fixed (the page now remembers every result's title).
 Vitest 213 passed (186 before): Catalog 12, MoviesSection 2, MovieSearch 9, MovieCard +4; 3 mutants of the table and 4 of the search caught. npm run build PASS: app 128.2 KB gzip, admin 150.9 KB, 0 admin modules in the
 user entry, contrast lowest 4.51:1.
+
+=== 4. INDEPENDENT REVIEW AND FIXES (task 6.3, section 8 of tasks.md) ===
+Review (read-only, a separate agent, 24 files): REQUEST CHANGES. 0 critical, 3 high, 8 medium, 9 low, 5 documentation drifts. The spec-compliance pass found two real contract deviations (nullability of trainRatings/newRatings, and the
+blocking re-read written in the spec while the code refreshes in the background). Every point was checked in the code before it was fixed. PR #3 had been merged by the time the fixes were ready, so they travel in a second PR.
+
+Measured BEFORE the fix, on the real stack (laptop, other containers running; /movies is demo-only):
+  /movies?sort=wr&size=50   0.58-1.61 s per request      /movies?sort=ratings 0.26-0.29 s      /movies?sort=title 0.29-0.32 s      /movies?q=pulp 0.07-0.11 s (first 0.46 s)
+  /recommendations/1?k=10   0.03-0.07 s idle, but 0.84-1.83 s while four clients looped /movies?sort=wr;   /health 0.11-0.40 s under the same load.
+Cause: every request sorted the whole 87,585-movie catalog (the "sort everything" figure of section 2 was 130-250 ms on a quiet machine) and held a worker and the GIL while doing it.
+
+High
+  1. OrderCache (src/serving/catalog.py): the whole catalog in each (sort, direction) is computed once and kept while the entries, the baseline and the ledger deltas are the same objects; a search filters that order and takes
+     its page (filtering keeps the order). One order is built at a time; the number kept is bounded (16). LivePopularity returns the same deltas object while the ledger content is unchanged.
+  2. LivePopularity.snapshot() had no non-blocking path: a /movies request could queue a cold /recommendations behind a ledger aggregation. It now has the TTL cache and the "a reader with a recent answer does not wait" path of
+     get(), and serves the previous result (up to 60 s) when a refresh fails.
+  3. CatalogCache leaked its lock when the refresh thread could not start (RuntimeError "can't start new thread"): the catalog never refreshed again and invalidate() (POST/DELETE /movies) hung. The lock is released and the
+     previous copy is served.
+Medium (fixed)
+  - invalidate() no longer waits for a read in progress (generation counter; a read that began before it is not published). Measured by the review: it could hold POST /movies for the whole 2.3 s read.
+  - search() refuses page < 1 and size < 1 (a negative page returned rows from the end of the list).
+  - Admin table: the page returns to 1 while rendering, not in an effect (the effect sent the new filter with the old page, then again with page 1); an error after a first successful load is shown (it was hidden because the
+    old data was kept); a 422 for avg/wr falls back to the rating count; the heading and the pager use one page number; the search text is trimmed before the pause.
+  - User search: a one-letter title with a genre selected says it is not used ("Tên phim cần ít nhất 2 ký tự nên chưa được dùng để lọc"), where the box looked broken. A 4xx answer is no longer retried; the search list is not
+    reloaded page by page on every window focus; the result list is memoised.
+  - trainRatings and newRatings are counts and are 0 when there are none (spec and design said null, the code and a test said 0): the spec and the design were changed, since "0 ratings" is more exact than "unknown".
+Documentation: spec (statistics, cache, new requirement "A search does not sort the catalog"), design D-1/D-3/D-5 and the risks, tasks 3.1/3.2 and section 8.
+
+AFTER the fix (api image rebuilt, same machine):
+  /movies?sort=wr&size=50   first request 2.9 s (reads the catalog and the statistics and builds the order), then 0.013-0.020 s      sort=ratings 0.020-0.023 s (first 0.096 s)      sort=title 0.015-0.032 s
+  /movies?q=pulp 0.096-0.131 s and genre=Western&sort=title 0.087-0.264 s: the filter over 87k entries is 30-55 ms in pure Python (measured apart from the API: unfiltered 0.1 ms), the rest is Mongo statistics and serialisation.
+  /recommendations/1?k=10   0.048-0.058 s idle (first 0.155 s); 0.106-0.280 s while four clients loop /movies?sort=wr (was 0.84-1.83 s);   /health 0.055-0.091 s under the same load (was 0.11-0.40 s).
+
+Tests: pytest 365 passed (349 before: +16), Vitest 217 passed (213 before: +4), npm run build PASS (app 128.3 KB gzip, admin 151.0 KB, 0 admin modules in the user entry, contrast lowest 4.51:1), openspec validate --strict
+valid for both changes. Browser check on the rebuilt image: admin #/movies lists 87,585 movies (Shawshank 102,939 +10 new, Forrest Gump 100,296, Pulp Fiction 98,425 +16 new), every request answered 200.
+Mutation checks (each fix broken on purpose, then the tests run): backend 12 of 12 caught (the generation check, the lock release, the blocking invalidate, the blocking snapshot reader, the unbounded order cache, a changed-data
+check that always says "same", no single flight, a new {} per request that defeats the cache, no cache passed by the API, no page/size check, deltas object not kept, snapshot not cached; "snapshot not cached" survived until a
+test with the lock held and a cached "no statistics" answer was added). Frontend 6 of 7 caught (page reset in an effect, error hidden with data, no 422 fallback, untrimmed text, a 4xx retried, the one-letter note).
+The survivor: removing the guard that hides the error box while the table falls back after a 422 shows the box for one render; the settled state is tested, the flash is not.
+
+Not changed, on purpose
+  - A failed first load of the catalog is retried by every request (no back-off): while Mongo is down nothing else works either.
+  - /openapi.json and /docs still describe /movies when api.demo_enabled is false (the route answers 404; the same is true of every other demo route). A decision to record, not a fix for this change.
+  - MoviesSection invalidates the ["movies"] prefix, which also matches the user page's search keys; harmless today (separate bundles).
+  - Timing-based tests: the new "space after the word" test waits 450 ms and asserts that nothing more was sent (it cannot fail by being slow); the older debounce tests keep their real timers.
+  - refetchOnWindowFocus: false on the user search and the memoised result list are configuration and have no test of their own; the heading page number can differ from the pager for one render while a page loads.

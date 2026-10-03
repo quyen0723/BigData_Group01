@@ -376,6 +376,74 @@ def test_readers_with_a_recent_answer_do_not_wait_for_a_slow_refresh():
     assert live.get() is not first                                                   # and the refresh has replaced it
 
 
+# ---- snapshot: the numbers behind the movie search ----------------------------------------------------------------------
+
+def test_snapshot_is_cached_for_one_ttl_and_keeps_the_same_objects_while_nothing_changed():
+    repo, clock, live = make()
+    first = live.snapshot()
+    assert first is not None and live.snapshot() is first
+    assert repo.calls.count("get_movie_stats") == 1                                  # one read for the whole TTL, however many searches
+    clock.advance(2.5)
+    again = live.snapshot()
+    assert repo.calls.count("get_movie_stats") == 2 and repo.calls.count("get_rating_deltas") == 2
+    assert again[0] is first[0] and again[1] is first[1]                             # recomputed, but nothing new: the same objects
+    repo.ledger_events.append(ev("e1", 7, 3, 5.0))
+    clock.advance(2.5)
+    changed = live.snapshot()
+    assert changed[1] is not first[1] and changed[1][3][0] == 1                      # a new rating: new deltas
+
+
+def test_snapshot_without_a_baseline_is_none_and_read_once_per_ttl():
+    repo, clock, live = make(FakeServingRepository(movies=MOVIES))
+    assert live.snapshot() is None and live.snapshot() is None
+    assert repo.calls.count("get_movie_stats") == 1
+
+
+def test_snapshot_serves_a_recent_result_when_reading_fails_then_gives_up():
+    repo, clock, live = make()
+    first = live.snapshot()
+    repo.stats_error = RuntimeError("mongo gone")
+    clock.advance(2.5)
+    assert live.snapshot() is first                                                  # recent: still served
+    clock.advance(STALE_SECONDS + 1)
+    assert live.snapshot() is None                                                   # too old: no statistics rather than old ones
+
+
+def test_a_snapshot_reader_with_a_recent_answer_does_not_wait_for_a_slow_refresh():
+    repo, clock, live = make()
+    first = live.snapshot()
+    release, started = threading.Event(), threading.Event()
+    original = repo.get_rating_deltas
+
+    def slow(since):
+        started.set()
+        assert release.wait(5)
+        return original(since)
+
+    repo.get_rating_deltas = slow
+    clock.advance(2.5)
+    refresher = threading.Thread(target=live.snapshot)
+    refresher.start()
+    assert started.wait(5)                                                           # the refresh is inside Mongo and holds the lock
+    t0 = time.monotonic()
+    assert live.snapshot() is first                                                  # a search does not queue behind it
+    assert time.monotonic() - t0 < 1.0
+    release.set()
+    refresher.join(5)
+
+
+def test_a_cached_snapshot_without_a_baseline_is_served_while_the_lock_is_held():
+    repo, clock, live = make(FakeServingRepository(movies=MOVIES))
+    assert live.snapshot() is None                                                   # cached as "no statistics" for one TTL
+    answers = []
+    with live._lock:                                                                 # e.g. a popular-list refresh is in progress
+        reader = threading.Thread(target=lambda: answers.append(live.snapshot()))
+        reader.start()
+        reader.join(2)
+        assert answers == [None]                                                     # answered from the cache, not queued behind the lock
+    reader.join(2)
+
+
 # ---- configuration: whole numbers --------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("block,key", [({"top_n": 10.5}, "popularity.top_n"), ({"min_support": 100.7}, "popularity.min_support")])

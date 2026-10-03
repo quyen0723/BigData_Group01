@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type { MovieRow, Recommendation } from '@/shared/api/types'
 import { SEARCH_PAGE_SIZE, useMovieSearch } from '@/shared/hooks/queries'
 import { GENRE_NAMES } from '@/shared/lib/genre'
@@ -59,8 +59,11 @@ export function MovieSearch({
   const enough = typed >= MIN_CHARS || genre !== ''
   const ready = q.length >= MIN_CHARS || genre !== ''
   const search = useMovieSearch({ q: q.length >= MIN_CHARS ? q : '', genre: genre || null }, { enabled: ready })
-  const items = search.data?.pages.flatMap((p) => p.items) ?? []
-  const total = search.data?.pages[0]?.total ?? 0
+  const pages = search.data?.pages
+  const items = useMemo(() => pages?.flatMap((p) => p.items) ?? [], [pages])
+  const total = pages?.[0]?.total ?? 0
+  // With a genre selected one letter is enough to search, but the letter itself is not used: say so, or the box looks broken.
+  const nameIgnored = genre !== '' && typed > 0 && typed < MIN_CHARS
 
   useEffect(() => {
     for (const row of items) rememberTitle(row.movieId, row.title)
@@ -103,9 +106,14 @@ export function MovieSearch({
           ? typed > 0
             ? `Nhập ít nhất ${MIN_CHARS} ký tự hoặc chọn một thể loại.`
             : 'Gõ tên phim hoặc chọn một thể loại để tìm. Chấm sao để hệ thống hiểu gu của bạn.'
-          : search.isSuccess && items.length > 0
-            ? `Tìm thấy ${total.toLocaleString('en-US')} phim${total > items.length ? `, đang hiện ${items.length}` : ''}.`
-            : ''}
+          : [
+              search.isSuccess && items.length > 0
+                ? `Tìm thấy ${total.toLocaleString('en-US')} phim${total > items.length ? `, đang hiện ${items.length}` : ''}.`
+                : '',
+              nameIgnored ? `Tên phim cần ít nhất ${MIN_CHARS} ký tự nên chưa được dùng để lọc.` : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
       </p>
 
       {enough && search.isPending && search.fetchStatus !== 'idle' && (
