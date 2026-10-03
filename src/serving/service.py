@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from . import exclusion, fusion, new_items, router
 from .config import NewItemsConfig, RoutingConfig
+from .live_popularity import LivePopularity
 from .models import Candidate, RecommendationItem
 from .repository import ServingRepository
 
@@ -57,12 +58,23 @@ def _place_new_movies(
     return placed, [c.movie_id for c in placed if c.movie_id in candidate_ids]
 
 
+def _popularity_items(repo: ServingRepository, pointer, live: LivePopularity | None) -> list[dict]:
+    """The popularity list: live weighted rating when it is on and available, otherwise the artifact of the active
+    model version (spec live-popularity "Fall back to the artifact"). `live.get()` never raises."""
+    if live is not None:
+        result = live.get()
+        if result is not None and result.items:
+            return [{"movieId": p.movie_id, "score": p.wr, "support": p.v} for p in result.items]
+    return repo.get_popular_movies(pointer.artifacts["popular_movies"])
+
+
 def get_recommendations(
     user_id: int,
     k: int,
     repo: ServingRepository,
     cfg: RoutingConfig,
     new_items_cfg: NewItemsConfig | None = None,
+    popularity: LivePopularity | None = None,
 ) -> RecommendationResponse:
     pointer = repo.get_active_pointer()
 
@@ -102,7 +114,7 @@ def get_recommendations(
         if not content_candidates:
             plan = router.drop_empty_content(plan)
 
-    popularity_items = repo.get_popular_movies(pointer.artifacts["popular_movies"])
+    popularity_items = _popularity_items(repo, pointer, popularity)
     popularity_candidates = fusion.rank_candidates(
         [(item["movieId"], item["score"], item.get("support", 0)) for item in popularity_items]
     )

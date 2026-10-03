@@ -16,6 +16,7 @@ mongo:
     serving_meta: "serving_meta"    # additive
     model_registry: "model_registry" # additive
     pipeline_state: "pipeline_state" # additive
+    movie_stats: "movie_stats"      # additive: per-movie rating count and sum of the training split (loaders.build_movie_stats)
   serving_meta_cache_ttl_seconds: 5  # D-5: pointer cache TTL, response consistency window
 
 api:
@@ -38,6 +39,16 @@ new_items:
   position: 3               # 1-based rank where the first new movie is inserted
   window_days: 30           # a demo movie counts as "new" for this long after addedAt
   id_range_start: 9000000   # reserved movieId range for demo movies (MovieLens max is 292,757)
+
+# Live weighted-rating popularity (change live-weighted-popularity, design D-1..D-6).
+# live: false -> the popular_movies.json artifact only. true -> WR from movie_stats (training split) plus the ratings the
+# streaming pipeline applied since (rating_events ledger); falls back to the artifact when movie_stats is missing or fails.
+popularity:
+  live: true
+  m: 1000                   # WR = v/(v+m)*R + m/(v+m)*C, C is movie_stats._meta.C (mean of the training split)
+  min_support: 100          # ratings a movie needs (training + new) to be eligible, as in the artifact
+  top_n: 10                 # list size, same as the artifact
+  cache_ttl_seconds: 2      # a computed list is reused for this long
 
 routing:
   T_few_enough: 10          # PROVISIONAL until evidence/p2_tier_threshold.csv (D-11) chooses it

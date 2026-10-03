@@ -143,6 +143,63 @@ class SystemStatusOut(BaseModel):
     demoMovies: list[DemoMovieOut]
 
 
+class PopularityItemOut(BaseModel):
+    """One row of GET /debug/popularity: the numbers behind a movie's weighted rating."""
+    rank: int
+    movieId: int
+    title: str
+    genres: str
+    avgRating: float | None         # R; null when the list comes from the artifact (it only has WR)
+    support: int                    # v: rating count, baseline + new
+    baseSupport: int                # rating count in the training split
+    newRatings: int                 # ratings counted from the ledger
+    wr: float
+    baseRank: int | None            # rank in the baseline-only ordering (same m); null beyond rank 200 or for the artifact
+
+
+class PopularityBaselineOut(BaseModel):
+    generatedAt: str
+    cutoff: float
+    ratings: int
+
+
+class PopularityOut(BaseModel):
+    source: str                     # "live" (movie_stats + ledger) or "artifact" (popular_movies.json)
+    liveEnabled: bool               # popularity.live: do /recommendations use the live list?
+    preview: bool                   # m differs from the configured value (a what-if, serving is unchanged)
+    m: float
+    c: float | None
+    minSupport: int
+    baseline: PopularityBaselineOut | None
+    appliedEvents: int
+    generatedAt: str
+    items: list[PopularityItemOut]
+
+
+class MovieRowOut(BaseModel):
+    """One row of GET /movies."""
+    movieId: int
+    title: str
+    genres: list[str]
+    ratings: int                    # stored support + ratings applied since
+    trainRatings: int               # ratings in the training split (what the average and WR are computed from)
+    newRatings: int                 # ratings counted from the ledger
+    avgRating: float | None         # null: no rating in the training split or the ledger
+    wr: float | None
+    isDemo: bool
+
+
+class MovieListOut(BaseModel):
+    total: int
+    page: int
+    size: int
+    pages: int
+    hasStats: bool                  # false when movie_stats is not loaded: no averages
+    m: float
+    c: float | None
+    items: list[MovieRowOut]
+
+
 class DebugPipelineOut(BaseModel):
     lastBatchId: int | None
     lastRunAt: str | None

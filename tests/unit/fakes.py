@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from serving.models import HistorySnapshot
+from serving.popularity import BaselineStats, deltas_from_events
 from serving.repository import ActivePointer
 
 
@@ -23,7 +24,13 @@ class FakeServingRepository:
         model_registry: list[dict] | None = None,
         retrain_progress: dict | None = None,
         stars: dict[int, dict[int, float]] | None = None,
+        movie_stats: BaselineStats | None = None,
+        ledger_events: list[dict] | None = None,
     ):
+        self.movie_stats = movie_stats                  # live popularity baseline (None = not loaded)
+        self.ledger_events = ledger_events or []        # raw rating_events documents
+        self.stats_error: Exception | None = None       # raised by get_movie_stats when set
+        self.ledger_error: Exception | None = None      # raised by get_rating_deltas when set
         self.active_version = active_version
         self.artifacts = artifacts or {
             "user_recommendations": active_version,
@@ -123,3 +130,19 @@ class FakeServingRepository:
 
     def get_retrain_progress(self) -> dict:
         return self.retrain_progress
+
+    def get_catalog(self) -> list[dict]:
+        self.calls.append("get_catalog")
+        return [{"_id": mid, **doc} for mid, doc in self.movies.items()]
+
+    def get_movie_stats(self) -> BaselineStats | None:
+        self.calls.append("get_movie_stats")
+        if self.stats_error is not None:
+            raise self.stats_error
+        return self.movie_stats
+
+    def get_rating_deltas(self, ledger_since) -> dict[int, tuple[int, float]]:
+        self.calls.append("get_rating_deltas")
+        if self.ledger_error is not None:
+            raise self.ledger_error
+        return deltas_from_events(self.ledger_events, ledger_since)

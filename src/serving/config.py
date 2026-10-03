@@ -61,6 +61,17 @@ class NewItemsConfig:
 
 
 @dataclass(frozen=True)
+class PopularityConfig:
+    """Live weighted-rating popularity (change live-weighted-popularity). `live` false = the popular_movies.json
+    artifact only, which is also what a configuration without a `popularity` block gives."""
+    live: bool = False
+    m: float = 1000.0                   # WR = v/(v+m)*R + m/(v+m)*C
+    min_support: int = 100              # ratings a movie needs (baseline + new) to be eligible
+    top_n: int = 10                     # list size, same as the artifact
+    cache_ttl_seconds: float = 2.0      # a computed list is reused for this long
+
+
+@dataclass(frozen=True)
 class ServingConfig:
     mongo: MongoConfig
     api: ApiConfig
@@ -69,9 +80,40 @@ class ServingConfig:
     api_log_path: str
     new_items: NewItemsConfig = NewItemsConfig()
     retrain_n_min_events: int = 50
+    popularity: PopularityConfig = PopularityConfig()
 
 
 UI_CHOICES = ("legacy", "react")
+
+
+def _popularity_config(raw: dict | None) -> PopularityConfig:
+    """Validate the `popularity` block; every message names the offending key."""
+    raw = raw or {}
+    live = raw.get("live", False)
+    if not isinstance(live, bool):
+        raise ValueError(f"popularity.live must be true or false, got {live!r}")
+
+    def number(key: str, default, kind):
+        value = raw.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"popularity.{key} must be a number, got {value!r}")
+        if kind is int and isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"popularity.{key} must be a whole number, got {value!r}")
+        return kind(value)
+
+    m = number("m", 1000, float)
+    min_support = number("min_support", 100, int)
+    top_n = number("top_n", 10, int)
+    ttl = number("cache_ttl_seconds", 2, float)
+    if m < 0:
+        raise ValueError(f"popularity.m must be >= 0, got {m}")
+    if min_support < 1:
+        raise ValueError(f"popularity.min_support must be >= 1, got {min_support}")
+    if not 1 <= top_n <= 50:
+        raise ValueError(f"popularity.top_n must be between 1 and 50, got {top_n}")
+    if ttl < 0:
+        raise ValueError(f"popularity.cache_ttl_seconds must be >= 0, got {ttl}")
+    return PopularityConfig(live=live, m=m, min_support=min_support, top_n=top_n, cache_ttl_seconds=ttl)
 
 
 def _ui_choice(value: object) -> str:
@@ -134,4 +176,5 @@ def load_serving_config(path: Path | None = None) -> ServingConfig:
             id_range_start=int(new_items_raw.get("id_range_start", 9_000_000)),
         ),
         retrain_n_min_events=n_min_events,
+        popularity=_popularity_config(raw.get("popularity")),
     )

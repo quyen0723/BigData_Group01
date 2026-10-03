@@ -11,6 +11,7 @@ from typing import Protocol
 
 from .config import MongoConfig
 from .models import HistorySnapshot
+from .popularity import BaselineStats
 from .timeutil import to_epoch
 
 
@@ -38,6 +39,27 @@ class ServingRepository(Protocol):
     def delete_demo_movie(self, movie_id: int, id_range_start: int) -> bool: ...
     def get_model_registry(self) -> list[dict]: ...
     def get_retrain_progress(self) -> dict: ...
+    def get_movie_stats(self) -> BaselineStats | None: ...
+    def get_catalog(self) -> list[dict]: ...
+    def get_rating_deltas(self, ledger_since: datetime | None) -> dict[int, tuple[int, float]]: ...
+
+
+META_KEYS = ("generatedAt", "movies", "C", "cutoff", "ratings")      # what movie_stats._meta must carry
+
+
+def rating_deltas_pipeline(ledger_since: datetime | None) -> list[dict]:
+    """Per movie, the (count, sum) of ratings applied by streaming: one rating per (userId, movieId), the latest by
+    (timestamp, ingestedAt, _id); with `ledger_since`, only events ingested after it. Kept as a function so its shape is tested
+    and so scripts/check_live_popularity_store.py can run exactly this against a real Mongo."""
+    pipeline: list[dict] = []
+    if ledger_since is not None:
+        pipeline.append({"$match": {"ingestedAt": {"$gt": ledger_since}}})
+    pipeline += [
+        {"$sort": {"timestamp": 1, "ingestedAt": 1, "_id": 1}},
+        {"$group": {"_id": {"u": "$userId", "m": "$movieId"}, "rating": {"$last": "$rating"}}},
+        {"$group": {"_id": "$_id.m", "n": {"$sum": 1}, "sum": {"$sum": "$rating"}}},
+    ]
+    return pipeline
 
 
 class MongoServingRepository:
@@ -57,6 +79,7 @@ class MongoServingRepository:
         self._pointer_ttl = cfg.serving_meta_cache_ttl_seconds
         self._pointer_cache: ActivePointer | None = None
         self._pointer_cached_at: float = 0.0
+        self._stats_cache: BaselineStats | None = None      # movie_stats, loaded once per generatedAt
 
     def get_active_pointer(self) -> ActivePointer:
         now = time.monotonic()
@@ -213,3 +236,49 @@ class MongoServingRepository:
         query = {"ingestedAt": {"$gt": watermark}} if watermark else {}
         pending = self._db[self._collections["rating_events"]].count_documents(query)
         return {"pending": pending, "watermark": watermark}
+
+    def get_catalog(self) -> list[dict]:
+        """Every movie as {_id, title, genres, support} for the demo search (catalog.CatalogCache keeps it for 30 s)."""
+        return list(self._db[self._collections["movies"]].find({}, {"title": 1, "genres": 1, "support": 1}))
+
+    def get_movie_stats(self) -> BaselineStats | None:
+        """Training-split statistics for live popularity (loaders/build_movie_stats.py).
+
+        The `_meta` document is written last and removed first by the loader, so its presence means the
+        collection is complete; its `movies` count is checked too. The ~36k documents are read once and kept
+        until `_meta.generatedAt` changes, so each call costs one small read. Returns None when there is no
+        usable baseline (the caller then serves the artifact)."""
+        coll = self._db[self._collections.get("movie_stats", "movie_stats")]
+        meta = coll.find_one({"_id": "_meta"})
+        if meta is None:
+            self._stats_cache = None
+            return None
+        missing = [k for k in META_KEYS if k not in meta]
+        if missing:
+            raise RuntimeError(f"movie_stats._meta is incomplete (missing {', '.join(missing)}): rebuild it with loaders.build_movie_stats")
+        cached = self._stats_cache
+        if cached is not None and cached.generated_at == meta["generatedAt"]:
+            return cached
+        stats = {
+            doc["_id"]: (int(doc["n0"]), float(doc["sum0"]))
+            for doc in coll.find({"_id": {"$type": "number"}}, {"n0": 1, "sum0": 1})
+        }
+        if len(stats) != meta["movies"]:
+            raise RuntimeError(f"movie_stats holds {len(stats):,} movies but _meta says {meta['movies']:,}: incomplete load")
+        self._stats_cache = BaselineStats(
+            stats=stats,
+            c=float(meta["C"]),
+            cutoff=float(meta["cutoff"]),
+            ratings=int(meta["ratings"]),
+            movies=int(meta["movies"]),
+            generated_at=meta["generatedAt"],
+            ledger_since=meta.get("ledgerSince"),
+        )
+        return self._stats_cache
+
+    def get_rating_deltas(self, ledger_since: datetime | None) -> dict[int, tuple[int, float]]:
+        """Ratings applied by streaming, per movie: (count, sum). One rating per (userId, movieId), the latest by
+        (timestamp, ingestedAt, _id); with `ledger_since`, only events ingested after it (the baseline already has the
+        rest). The same rule as popularity.deltas_from_events, which is the reference the tests hold this to."""
+        cursor = self._db[self._collections["rating_events"]].aggregate(rating_deltas_pipeline(ledger_since), allowDiskUse=True)
+        return {doc["_id"]: (int(doc["n"]), float(doc["sum"])) for doc in cursor}
