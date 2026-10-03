@@ -92,6 +92,10 @@ curl http://127.0.0.1:8088/recommendations/1?k=5
 #   http://127.0.0.1:8088/app    user app: pick a demo persona, rate movies
 #   http://127.0.0.1:8088/admin  admin console (also /demo): case tests, demo movies, model lifecycle
 # Personas are demo accounts mapped to real MovieLens users; there is no authentication.
+# The pages are a React build (web/, built into the `api` image by `docker compose up -d --build api`).
+# api.ui in configs/serving.yaml picks what /app, /admin, /demo serve: "react" (default) or "legacy"
+# (the old static pages, always reachable at /legacy/app and /legacy/admin). Frontend dev, scripts
+# and checks: web/README.md.
 
 # 4. The streaming pipeline is the `streaming` service: it already started with step 1 and
 #    restarts by itself after a Docker Desktop restart or a crash (restart: unless-stopped).

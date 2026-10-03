@@ -1,0 +1,162 @@
+P2 - REBUILD UI WITH REACT + VITE (change: rebuild-ui-react)
+Branch feat/rebuild-ui-react, started 2026-10-03 from main dccee2f. Baseline: pytest 164 passed.
+
+=== 1. FEATURE PARITY CHECKLIST (read from src/api/static/app.html and demo.html) ===
+Tasks 8.1 and 8.2 tick every line. [x] = verified on the built pages served by the api container (2026-10-03), [~] = verified by unit tests only (see the notes in section 3), [ ] = not verified.
+
+USER PAGE (old: app.html)
+ U1  [x] Header: brand "MovieLens"; skip link; name + "Đăng xuất" visible only when logged in
+ U2  [x] Chooser: H1 "Chọn tài khoản để bắt đầu"; note "tài khoản demo, không mật khẩu"; personas An 700008 / Bình 1 / Chi 127249 with taste text
+         and meta "N phim đã đánh giá · người dùng MovieLens #id" (from GET /users/{id}/ratings?limit=1)
+ U3  [x] "Tài khoản bạn đã tạo" list (localStorage), hidden when empty
+ U4  [x] Create account form: label, max 40, role=alert error "Vui lòng nhập tên từ 1 đến 40 ký tự.", button disabled while working,
+         fresh userId 500000+random with total 0 (5 tries), error "Chưa tạo được tài khoản. Vui lòng thử lại.", saved then logs in
+ U5  [x] Link to the admin page from the chooser
+ U6  [x] Session per tab (sessionStorage) restores the account on reload; document title follows the account
+ U7  [x] Home: "Xin chào, {name}" (focused), sub "Bạn chưa đánh giá phim nào." / "Bạn đã đánh giá N phim.", invite box when total is 0
+ U8  [x] Recommendations: 10 skeleton cards while loading (aria-busy); error "Chưa tải được gợi ý." with a "Thử lại" button
+ U9  [x] Card: genre accent, "Mới" badge, title, genres joined with " · ", reason label, 5 stars with aria-label "Chấm N sao cho {title}",
+         hover/focus preview, state line
+ U10 [x] Reason labels: als "Dành riêng cho bạn", new "Mới thêm", content "Giống phim bạn đã thích", otherwise "Đang được yêu thích"
+ U11 [x] Rating: card locked, "Đang gửi đánh giá…" with spinner, focus kept in the card; non-202 -> toast error "Chưa lưu được đánh giá. Vui lòng thử lại." and unlock;
+         202 -> toast "Đã lưu đánh giá N sao cho “title”", "Đang cập nhật gợi ý…", poll every 1 s up to ratingPollTimeoutSeconds;
+         applied -> toast "Gợi ý của bạn đã được cập nhật", reload feed and history; timeout -> "Đánh giá đã lưu, gợi ý sẽ cập nhật sau."
+ U12 [x] Same eventId on retry of the same (user, movie, stars); every id of the movie dropped after 202 or 422; all dropped on login/logout
+ U13 [x] Polls cancelled on logout or account switch; pending counter never leaks
+ U14 [x] History: "Phim bạn đã đánh giá (N)", last 50, title + genres or "Phim đã được gỡ khỏi danh mục", stars value ("—" and aria "chưa có số sao" when null),
+         empty text "Chưa có phim nào. Hãy chấm sao một vài phim ở trên."
+ U15 [~] Refresh when the tab regains focus: silent (no skeleton), not while a rating is pending, not within 2 s of a load, redraw only if the list changed
+ U16 [x] Toasts: role=status, polite, auto close after 4 s, error variant
+ U17 [x] On start, GET /debug/system supplies ratingPollTimeoutSeconds (default 60)
+ U18 [x] Focus management: heading focused on login, recommendations heading focused after a refresh that dropped focus
+
+ADMIN PAGE (old: demo.html, also /demo)
+ A1  [x] Header: title, "demo-only" badge, link to the user page, case select (12), userId input, "Tải gợi ý"
+ A2  [x] Case card: title, table (Điều gì xảy ra / Recommendation / Streaming / ALS Retrain / Chốt), "Quan sát: tier=… · strategy=… · fallbackReason=… ·
+         interaction_count=… · user …", decision text in warning colour, ordered "how" steps
+ A3  [x] The 12 cases verbatim: free, c1..c9, als, noals (case 1 decision text updated: weighted rating is now applied)
+ A4  [x] User per case: "fresh" (random id with interaction_count 0, 5 tries), "seed" 700008 (error line "chạy: python scripts/seed_demo_users.py" when it has 0 ratings),
+         fixed ids 1 and 127249, null = type a userId
+ A5  [x] Movies panel (cases c3, c4, c9): title (max 200, placeholder), 19 genre checkboxes, "Thêm phim" needs a title and at least one genre,
+         hint text, list of demo movies with movieId and genres, "Xoá" per movie (rating already given is kept)
+ A6  [x] System panel (cases c5, c6): versions table (version, status chip active/rejected/other, imported time, gate "k/n đạt" and each failed gate as "✗ name — detail"),
+         retrain progress bar and text (pending / nMin, watermark, "đủ ngưỡng…"), scheduler hint
+ A7  [x] Recommendation cards: "#rank · score 0.0000", title, genres, "nguồn: …", "MỚI" pill, 5 stars, busy while rating
+ A8  [x] Side panel "Bên trong hệ thống": user, tier, strategy, fallbackReason (only when present), modelVersion, latency ms, interaction_count,
+         last batch ("#id @ time" or "(streaming chưa chạy batch nào)")
+ A9  [x] Event log, newest first, with [hh:mm:ss.mmm]: case selected, rate sent, "→ Kafka ✓ (202…)", "✓ applied (… batchId=…)", errors (POST /ratings, GET, /movies),
+         "tier đổi: a → b", movie left the list (rated / pushed out count), new movie appeared at rank n, "+ phim demo…", "− đã xoá phim demo…"
+ A10 [x] After applied: reload recommendations with the diff, refresh system status; tier cell flashes when it changes
+ A11 [~] Poll timeout line "⏱ hết Ns vẫn pending … Streaming pipeline có đang chạy không?"
+ A12 [x] Offline note; reachable at /admin and /demo
+
+=== 2. PROGRESS LOG ===
+[2026-10-03] Group 2 backend: api.ui flag (legacy|react), WEB_DIST_DIR, /app-next, /admin-next, /legacy/app, /legacy/admin, /ui/* assets route (only dist/assets,
+  404 when demo is off, path traversal refused), demo.tierThreshold in /debug/system (live API returns 10), .dockerignore, .gitignore. pytest 164 -> 181 (17 new in
+  tests/unit/test_web_frontend_routes.py). Live check after restarting api: /app-next 404 (no build), /legacy/app 200, /debug/system demo block has tierThreshold 10.
+[2026-10-03] Group 3 scaffold (web/): Vite 8 + React 19 + TypeScript 5.9 + Tailwind 4 + shadcn/ui (CLI copied 17 components into src/shared/ui) + TanStack Query 5 + sonner + lucide.
+  - TypeScript pinned to 5.9.3: npm picked 7.0.2 and openapi-typescript 7.13 needs ^5 (ERESOLVE).
+  - The shadcn CLI installed a stray npm package "cn" and next-themes and imported cn from it; fixed to @/shared/lib/utils, removed both packages, sonner is light-only.
+  - FONT FINDING (task 3.3): Fira Sans has a vietnamese subset (U+1EA0-1EF9 ...), Fira Code does not (it is only used for numbers/ids). The per-subset CSS files of
+    Fontsource (latin-400.css ...) carry NO unicode-range, so importing latin + latin-ext + vietnamese for one weight makes the last face win for every character.
+    Fixed by generating src/shared/styles/fonts.css from the full Fontsource CSS (11 @font-face with unicode-range, woff2 only, dist 948K -> 655K).
+    Browser check on the built page: faces loaded with ranges U+0-FF (latin), U+100-2BA (latin-ext), U+102-103,U+110... (vietnamese); document.fonts.check for
+    "ắằẳẵặấầẩẫậếềểễệốồổỗộớờởỡợứừửữựỳỷỹỵĐđơư" = true; computed font-family starts with "Fira Sans"; colours match the tokens (rgb(15,23,42) on rgb(248,250,252)).
+    Decision: keep Fira Sans (no fallback to the system font needed).
+  - openapi-typescript generated src/shared/api/schema.d.ts (701 lines) from the live API; committed.
+  - scripts/check-build.mjs (npm run check): gzip size per page (budget 250 / 350 KB), external resources, 36 contrast pairs.
+    On the scaffold: app 86.9 KB, admin 86.6 KB gzip (shared React/query chunk), nothing loaded from another host (react.dev and www.w3.org appear only as text
+    inside JS strings), lowest ratio 4.51:1 (input border on background; text pairs are higher).
+  - shadcn "accent" kept as the neutral hover blue; the amber highlight for "Mới" is a separate token "highlight" (design D-8 updated).
+  - Vitest 5 + Testing Library run (smoke test passes).
+[2026-10-03] Group 4 shared layer: api/client.ts (ApiResult, never throws, status 0 on network error, unwrap/ApiError), keys, hooks/queries.ts, lib/{movie,genre,sources,tier,retry,ratingFlow}.ts,
+  ui/{genre-tile,star-rating,movie-card}. Design change: the pending-rating state lives in RatingFlow (plain TypeScript class read through useSyncExternalStore), not in per-card
+  state or refetchInterval queries, because a refetch can move a card to another row and mount it again while its stars must stay locked.
+  Vitest: 9 files, 64 tests pass (sources/rows, year split, 19+1 genres, retry ids incl. the "4 stars 503 / 5 stars 202 / 4 stars again" case, 8 banner cases, RatingFlow 10, StarRating 6, MovieCard 10).
+[2026-10-03] Group 5 user page (src/user): account.ts (personas, safe storage with the OLD keys mlapp.account / mlapp.accounts so accounts made on the old page still show, name rule, fresh id picker),
+  AccountContext, AccountChooser (+ create account with blur validation and role=alert), TierBanner, Feed (rows or one grid, skeletons, retry), RatingHistory, Home (toasts, retry action, focus management).
+  Button/Input/Select sizes raised to 44 px (40 px from 640 px up): shadcn defaults were 36 px.
+  BUG FOUND BY THE TESTS: the account chooser asks for the rating history with limit=1 (only the total) and Home with limit=50 but both used the same TanStack Query key, so Home received the cached
+  empty list of the first call (correct total, empty items). Key now includes the limit; invalidation uses the userId prefix.
+  Vitest 14 files, 99 tests pass (user page 35 incl. a full journey: chooser -> persona -> banner/feed/history -> rate -> saved toast -> applied toast -> movie leaves the feed;
+  503 -> error toast + "Thử lại" + stars unlocked; create account; storage that throws).
+[2026-10-03] Group 6 admin (src/admin): shell with shadcn Sidebar (drawer below 1024 px, nav landmark, aria-current), six sections by URL hash, the 12 cases copied from demo.html (caseData.ts; star
+  emoji written as the word "sao" and case 1 now says the weighted rating is live), CaseCard, UserView + internal panel (tier value marked for 1.2 s when it changes), DemoMovies (add dialog with
+  validation + delete confirmation), ModelPanel (PASS/FAIL with icon and word), Overview KPIs, event log (sessionStorage, newest first, hh:mm:ss.mmm), diff of the list after applied / movie change.
+  Windows gotcha: cases.ts and Cases.tsx collided (case-insensitive file system), data file renamed caseData.ts.
+  Vitest 19 files, 146 tests pass.  Build check: user page 126.5 KB gzip (budget 250), admin 145.7 KB (budget 350), no external host, 36 contrast pairs, lowest 4.51:1.
+[2026-10-03] Group 7 Docker: api.Dockerfile is two-stage (node:22-alpine builds web/, python:3.12-slim receives /web/dist at /app/web-dist, WEB_DIST_DIR set). Build 1m40s on a cold node layer.
+  Final image has no node; layer "COPY /web/dist" = 897 kB. docker-api image size 295 MB (6 days old) -> 411 MB; the frontend is 0.9 MB of that, the pip layer is 172 MB (pins unchanged),
+  the old layers are gone so the rest of the difference cannot be attributed. Build context: 5.57 kB for the Python stage (the .dockerignore keeps movielens32m/ 1.7 GB, zips, venvs out).
+  Live checks (api recreated with the new image): demo ON -> /app-next, /admin-next, /app, /admin, /demo, /legacy/app, /legacy/admin all 200 (titles correct), /ui/assets/app-*.js 200 text/javascript
+  15162 B, /ui/assets/../app.html 404. demo OFF -> all of those 404 incl. /ui/assets/*, /debug/system 404, /recommendations/1 still 200. Demo flag restored to true afterwards.
+
+=== 3. VERIFICATION ON THE BUILT PAGES (api container, real stack) - 2026-10-03 ===
+USER PAGE /app-next
+  - The tab's old sessionStorage account ("An") is picked up by the new page (same keys): opens straight on "Xin chào, An".
+  - Chooser: three personas with live counts (An 6 phim, Bình 150, Chi 70), skip link, no external request (performance.getEntriesByType('resource') all same origin).
+  - Journey A: created account "Kiểm thử giao diện" (user 553438, localStorage list updated). Tier 0 banner "Bạn chưa chấm phim nào ... 0/10"; feed = WR popularity (Shawshank, Godfather,
+    Usual Suspects, Schindler's List, Godfather II). Rated Shawshank 5 stars: stars disabled + "Đang cập nhật gợi ý…" immediately, toast "Đã lưu đánh giá 5 sao cho “Shawshank Redemption, The”",
+    applied after about 30 s -> toast "Gợi ý của bạn đã được cập nhật", the movie left the feed, banner "Bạn đã chấm 1 phim ... 1/10", history "Phim bạn đã đánh giá (1)" with 5 stars,
+    feed now crime/drama content (Godfather II first). Focus stayed on the greeting heading.
+  - Persona Bình (enough_history): banner "học từ 150 phim", TWO rows "Dành riêng cho bạn (3)" + "Giống phim bạn đã thích (7)". Persona Chi: banner "Hệ thống chưa có hồ sơ riêng" (als_artifact_missing),
+    one grid, no technical word on the page.
+  - Two-tab story: demo movie added in the admin page appears for An as a separate row "Mới thêm (1)" with the amber "Mới" badge, rank #3, Crime tile, no year; a deleted demo movie shows
+    "Phim đã được gỡ khỏi danh mục" in the history.
+  - Layout bug found and fixed by looking at it: at five columns the card was ~220 px wide so the five 40 px stars wrapped; grid capped at 4 columns.
+ADMIN PAGE /admin-next
+  - All 12 cases run on live data: free (waits for a userId); c1/c7/c9 pick a fresh user (tier 0_history POPULARITY interaction_count 0); c2/c3/c4/c8 user 700008 few_history; c3/c4/c9 show the demo
+    movie panel; c5/c6 the model lifecycle; als user 1 enough_history ALS+CONTENT 150; noals user 127249 fallbackReason=als_artifact_missing (highlighted in the internal panel).
+  - Add a demo movie through the dialog: empty submit shows both errors and sends nothing; with title + Crime + Drama it created movieId 9000006, closed the dialog, the log shows
+    "+ phim demo movieId=9000006 ...", "phim MỚI movieId=9000006 (...) xuất hiện ở hạng 3" and "1 phim khác không còn trong top-k". Delete: the confirmation dialog appears first and no DELETE was
+    sent before confirming; after confirming the movie left the list and the log shows "− đã xoá phim demo ...". The log survived page navigations (sessionStorage).
+  - UX bug found on the real page: at 768 px choosing a section in the drawer left the drawer open. Fixed (CloseDrawerOnNavigate) + unit test; re-checked on the page: closes.
+RESPONSIVE (no horizontal page scroll anywhere)
+  user page : 375 px 1 column, stars 44x44 on one line | 768 px 2 columns 40x40 | 1024 px 3 columns | 1440 px 4 columns (main 1152 px).
+  admin page: 375 px sidebar hidden, trigger 44x44, stars 44x44, models table scrolls inside its container | 768 px drawer (opens with 6 links, aria-current on the open section), 2 columns,
+              internal panel under the grid | 1024 px sidebar 239 px in the page | 1440 px internal panel (320 px) beside the grid.
+  (the viewport tool does not fire matchMedia change events on an open page, so each width was measured after a reload.)
+KEYBOARD: arrow keys / Home / End move between the five stars without rating (one Tab stop per group, 40x40 targets, every control has a name; 0 unnamed). Real Tab presses and the visible focus ring could NOT be
+  checked: the pane's window is inactive (document.hasFocus() false), so :focus / :focus-visible never match. Instead: the built CSS contains :focus-visible{outline:2px solid var(--ring)} and
+  .focus:not-sr-only:focus for the skip link, and unit tests cover roving tabindex, arrows, Enter and Space.
+REDUCED MOTION: not emulated; the built CSS has the prefers-reduced-motion block (animation 0.01 ms, 1 iteration, no transition).
+LEFTOVERS from these runs: user 553438 ("Kiểm thử giao diện") has one rating (Shawshank 5 stars) in Mongo and curated_ratings; demo_movie_seq advanced to 9000006 (the demo movie was deleted); the tab's
+  localStorage has the created account. Same kind of demo noise as the earlier tests.
+
+=== 4. TESTS AND INDEPENDENT REVIEW - 2026-10-03 (tasks 8.5, 8.6) ===
+INDEPENDENT REVIEW (code-reviewer agent, read-only, separate from the author pass): eight findings to fix (S1-S8) plus nits. All were handled; by theme:
+  - Stars: a disabled <button> drops out of the Tab order and loses the focused star while a rating is in flight; the radiogroup now uses aria-disabled (still focusable, roving tabindex kept, arrows wrap).
+  - Add-movie dialog: reopening it started with the previous form/error/busy state; genre rows were 16 px targets; fixed (reset every time it opens, whole row is the label: 44 px, 40 px from 640 px up).
+  - Admin cases: a slow "fresh user" search could overwrite a case chosen meanwhile (stale answer); guarded with a choice counter; an invalid typed userId now says so (role=alert, aria-invalid).
+  - Admin event log: a stored entry with an unknown kind was accepted; the loader now checks kind too.
+  - User page: focus jumped to the greeting even when a saved session was restored on load (past the skip link); now only after the account was chosen on this page (AccountContext.signedInHere).
+  - TierBanner live region, siblingPage (history paging) and smaller accessibility/wording nits.
+  - Build checks: the "no admin code in the user page" check used chunk names; it now builds the module closure of each entry from dist/.bundle-report.json (bundleReport plugin) and fails if
+    any src/admin module is reachable from the user entry. Negative test: importing admin/caseData into user/App.tsx made it print "FAIL admin modules reachable from the user page"; restored, PASS.
+  - Backend: 404 for unknown/missing page assets and cache headers on /ui/assets; .dockerignore tightened.
+FOUND WHILE WRITING THE REGRESSION TESTS (mutation check): the first fix for a late answer in the add-movie dialog compared "is the dialog open now?", which does not help when the dialog was closed
+  with Escape while sending and opened again before the answer arrived (the old refusal would show in the new dialog and unlock its button). Replaced by a session counter (one per open/close);
+  an abandoned request is still logged, and a late success still reloads the movie list but does not close or touch the newer dialog.
+REGRESSION TESTS ADDED (each one was made to fail by temporarily removing the code it protects, then the code was restored):
+  EventLog unknown kind (logic.test.ts), Cases stale fresh-user answer + invalid userId (Cases.test.tsx), add-movie dialog: label toggles the checkbox / 44 px rows / abandoned refusal /
+  abandoned success (DemoMovies.test.tsx), no focus steal on a restored session (user/App.test.tsx), useRatingFlow hook: events, signed-out, account switch stops polling and forgets retry ids,
+  onEvent/pollSeconds changes keep the same flow (shared/hooks/useRatingFlow.test.tsx).
+FINAL NUMBERS (same working tree, after the fixes):
+  tsc --noEmit exit 0. Vitest 21 files, 162 tests pass (0 skipped; no .skip/.only/.todo/xit anywhere in web/src; every test file has assertions).
+  pytest (.venv-serving) 184 passed. npm run build: app 126.6 KB gzip (budget 250), admin 146.0 KB (budget 350), 18 files scanned, nothing loaded from another host, 36 contrast pairs lowest 4.51:1,
+  modules reachable from the user entry 141 with 0 admin modules, from the admin entry 195. RESULT: PASS.
+  Docker api image rebuilt with these sources (411 MB, assets app-CNI5y0TN.js ...): /app-next /admin-next /legacy/app /legacy/admin /app /admin /demo /health all 200 (demo on).
+  Live check on the rebuilt image: persona An signs in and the greeting takes focus; after a reload (saved session) focus stays on the page start, skip link first, stars have one Tab stop each
+  (tabindex 0 / -1, aria-checked, no aria-disabled when idle); admin cases page: add-movie dialog has 19 genre rows of 44 px at the pane's narrow width; Cancel closed it and sent nothing.
+
+=== 5. SWITCH TO THE NEW PAGES (task 9.1) - 2026-10-03 ===
+configs/serving.yaml api.ui "legacy" -> "react" (the committed setting; demo_enabled stays a local-only true), `docker compose restart api` (config folder is mounted, no rebuild).
+  Probe of every page route (status, whether the HTML references /ui/assets = the React build):
+    ui=react   /app 200 REACT  /admin 200 REACT  /demo 200 REACT (title "MovieLens — Quản trị")  /app-next 200 REACT  /admin-next 200 REACT  /legacy/app 200 legacy  /legacy/admin 200 legacy
+    ui=legacy  /app 200 legacy /admin 200 legacy /demo 200 legacy                                /app-next 200 REACT  /admin-next 200 REACT  /legacy/app 200 legacy  /legacy/admin 200 legacy   (rollback)
+    ui=react   same as the first line again (set back; final value of the file is "react").
+  pytest: the flag test now says the committed config is "react" and a new test shows a config file without the key loads as "legacy" (an older config keeps the old pages). pytest 185 passed.
+DOCS (task 9.2): README.md (Demo UI note: React build, api.ui, /legacy, web/README.md), web/README.md (new: pages and routes, the flag, run/dev/scripts, what `npm run check` enforces, layout and the
+  things that are easy to break), docs/TESTING_GUIDE.md (route list, section "Giao diện React": address table, rollback, rebuild, 8-item checklist).
+  A check of the README claim found one wrong line before it was committed: Vite serves the dev pages under the base, so the dev URL is http://localhost:5173/ui/app.html (/app.html is 404);
+  also the dev server listens on localhost (::1), not 127.0.0.1. Tried for real: /ui/app.html 200, /ui/admin.html 200, /app.html 404, /health and /recommendations/1 200 through the proxy.

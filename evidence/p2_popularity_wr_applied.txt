@@ -1,0 +1,20 @@
+P2 - WEIGHTED-RATING POPULARITY APPLIED TO THE LIVE STACK (2026-10-03)
+What: the popularity list of PR #2 (feat/person1-weighted-rating, head 8d6cb3d, WR = v/(v+m)*R + m/(v+m)*C, m=1000, C=3.5287 train mean)
+      was loaded into Mongo as modelVersion v1.0.0 (option A: in place, no new version) for the demo.
+How:  git show origin/feat/person1-weighted-rating:artifacts/popular_movies.json > movielens32m/artifacts/popular_movies.wr.json
+      docker exec movielens-spark python -m loaders.load_artifacts --artifact popular --version v1.0.0 --file /data/artifacts/popular_movies.wr.json
+      -> OK, 1 doc written, 1 previous doc replaced (delete_many + insert: the version had no popularity document for about a second)
+Check: artifact valid (10 items, ranks 1..10, scores descending, min support 12,776). Mongo popular_movies: 2 docs (v1.0.0 = WR list, v1.1.0 untouched).
+API, new user (tier 0_history, POPULARITY, v1.0.0): 318 Shawshank, 858 Godfather, 50 Usual Suspects, 527 Schindler's List, 1221 Godfather II,
+      2959 Fight Club, 904 Rear Window, 1193 One Flew Over the Cuckoo's Nest, 2019 Seven Samurai, 912 Casablanca.  (Before: Planet Earth, Shawshank,
+      The Blue Planet, Godfather ... the two Documentary titles had 173 and 132 ratings.)
+Other tiers unchanged: user 1 (enough_history: als + content), Minh 591751 (few_history: 10 content documentaries), An 700008 (few_history).
+Streaming healthy, RestartCount 0, /health ok.
+Consequence for the demo: a new account no longer sees a Documentary in its first list. To show the "new Documentary movie" case, first rate a
+Documentary (or use a persona/user that already has one) so the account leaves tier 0.
+Caveats: v1.0.0 now holds different content than the original M2 package (the label stays v1.0.0; Quyen's plan is a new version, e.g. v1.2.0, via
+      stage_candidate + promotion_gate once the 0-byte ALS files are fixed). serving_meta, model_registry and the model card were not touched.
+Backups / rollback:
+  - old document exported to the session scratchpad (popular_v1.0.0_before_wr.json);
+  - the original artifact is still movielens32m/artifacts/popular_movies.json (Planet Earth first). Rollback:
+      docker exec movielens-spark python -m loaders.load_artifacts --artifact popular --version v1.0.0

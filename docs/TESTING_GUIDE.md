@@ -72,7 +72,9 @@ Từ change `add-demo-web-client`, có thêm 4 route: `POST /ratings`,
 `GET /ratings/{eventId}` (luôn bật), và các route demo-only (404 khi
 `api.demo_enabled` tắt, xem mục 2b): `GET /demo`, `GET /debug/users/{userId}`,
 `GET /debug/system`, `POST /movies`, `DELETE /movies/{movieId}`, `GET /app`,
-`GET /admin`, `GET /users/{userId}/ratings`.
+`GET /admin`, `GET /users/{userId}/ratings`. Từ change `rebuild-ui-react` có thêm
+`GET /app-next`, `GET /admin-next` (luôn là bản React), `GET /legacy/app`,
+`GET /legacy/admin` (luôn là trang cũ) và `GET /ui/assets/*` (file build), cũng 404 khi demo tắt.
 
 **Hợp đồng của `POST /ratings`.** `202` nghĩa là Kafka đã nhận, chưa phải đã áp dụng
 (hỏi `GET /ratings/{eventId}`). `503` kèm `kafka delivery timed out` nghĩa là
@@ -87,8 +89,10 @@ thử lại cùng một đánh giá (cùng user, phim và số sao) và đổi i
 ## 2b. Demo bằng giao diện (khuyên dùng cho buổi thuyết trình)
 
 Đây là cách nhanh nhất để giám khảo **thấy** hệ thống hoạt động mà không cần
-nhìn lệnh terminal: 1 trang HTML tĩnh, tự phục vụ bởi chính API, không cần cài
-gì thêm, không cần internet.
+nhìn lệnh terminal: hai trang web (React, đã build sẵn trong image `api`), tự
+phục vụ bởi chính API, không cần cài gì thêm, không cần internet (font cũng đóng
+gói sẵn). Xem "Giao diện React" ngay dưới phần này để biết đường dẫn, cờ `api.ui`
+và cách quay về trang cũ.
 
 **Bước 0 — bật cờ demo (mặc định tắt vì lý do bảo mật, xem
 `docs/DEPLOYMENT_DESIGN.md` §Security):**
@@ -160,6 +164,42 @@ bấm ⭐ lần đầu (lần xử lý đầu tiên sau khi khởi động chậ
 
 Nếu quá giờ demo mà stack không lên kịp: dùng video quay sẵn (mục 3.4 trong
 `openspec/changes/add-demo-web-client/tasks.md`) làm phương án dự phòng.
+
+### Giao diện React (change `rebuild-ui-react`)
+
+Hai trang `/app` (người dùng) và `/admin` (quản trị, cũng là `/demo`) là bản React xây từ thư mục `web/`.
+Dữ liệu và API không đổi; chỉ giao diện đổi. Các bước 1–5 ở trên vẫn đúng với trang mới (ô **Case test**,
+chấm sao, nhật ký, phim biến mất khỏi danh sách); khác biệt nhìn thấy: nhật ký ở mục **Nhật ký** của
+thanh bên và dải "Nhật ký gần đây" dưới mỗi case; sau khi rating được áp dụng hoặc phim demo thay đổi, nhật ký
+ghi cái gì đổi trong danh sách (ví dụ `tier đổi: 0_history → few_history`, `phim MỚI movieId=… xuất hiện ở hạng 3`);
+thêm/xoá phim demo qua hộp thoại (xoá phải xác nhận).
+
+| Địa chỉ | Trả về |
+|---|---|
+| `/app`, `/admin`, `/demo` | theo `api.ui` trong `configs/serving.yaml`: `"react"` (mặc định) hoặc `"legacy"` |
+| `/app-next`, `/admin-next` | luôn bản React (để so sánh cạnh trang cũ) |
+| `/legacy/app`, `/legacy/admin` | luôn trang cũ (tệp tĩnh) |
+
+Tất cả đều 404 khi `api.demo_enabled: false`.
+
+**Quay về trang cũ (rollback)** — chỉ cần đổi cờ rồi khởi động lại `api`, không cần build:
+```powershell
+# configs/serving.yaml: api.ui: "react" -> "legacy"
+docker compose -f docker/docker-compose.yml restart api
+```
+**Sửa code giao diện rồi xem lại:** `docker compose -f docker/docker-compose.yml up -d --build api`
+(lần build đầu cần mạng để `npm ci`; build tự chạy kiểm tra dung lượng, tương phản, không tải tài nguyên
+ngoài, và sẽ báo lỗi nếu trang người dùng lẫn mã admin). Chạy dev và test: `web/README.md`.
+
+**Checklist xem nhanh (khoảng 5 phút):**
+- [ ] `/app` hiện ba persona An, Bình, Chi kèm số phim đã đánh giá; chọn **An** → lời chào, banner "Bạn đã chấm N phim" (N = số rating hiện có của An, seed ban đầu là 3), hàng "Giống phim bạn đã thích".
+- [ ] Chấm sao một phim: ngay lập tức hết bấm được và có "Đang cập nhật gợi ý…", toast "Đã lưu đánh giá…", khoảng 10–45 giây sau toast "Gợi ý của bạn đã được cập nhật", phim rời danh sách.
+- [ ] Bàn phím: Tab đầu tiên tới "Bỏ qua phần đầu trang"; mỗi nhóm sao là một điểm dừng Tab, phím mũi tên / Home / End di chuyển giữa các sao.
+- [ ] Chọn **Bình** thấy hai hàng ("Dành riêng cho bạn" và "Giống phim bạn đã thích"); **Chi** thấy banner "Hệ thống chưa có hồ sơ riêng" và không có từ kỹ thuật nào trên trang.
+- [ ] `/admin`: sáu mục ở thanh bên (Tổng quan, Case test, Người dùng, Phim, Model, Nhật ký); đủ 12 case; case 3/4/9 có bảng phim demo, case 5/6 có vòng đời model.
+- [ ] Thêm một phim demo (Crime + Drama) rồi xoá: hộp thoại xác nhận hiện trước, chưa có `DELETE` nào gửi đi trước khi bấm "Xoá phim".
+- [ ] Thu nhỏ cửa sổ về 375 px và 768 px: không có thanh cuộn ngang; ở dưới 1024 px thanh bên của `/admin` thành ngăn kéo.
+- [ ] Rollback: đặt `ui: "legacy"`, restart `api`, `/app` ra trang cũ; đặt lại `"react"`.
 
 ### Demo hai vai bằng hai tab (change `demo-user-app-personas`)
 
