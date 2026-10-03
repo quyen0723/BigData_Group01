@@ -29,6 +29,7 @@ api:
   ratings_topic: "ratings.v1"                       # must match configs/streaming.yaml kafka.topic
   produce_timeout_seconds: 10                       # POST /ratings: flush() wait before 503
   rating_poll_timeout_seconds: 60                   # demo page: wait for "applied" (measured 42s on the demo machine)
+  ui: "react"                                       # pages served at /app, /admin, /demo: "legacy" (static files) or "react" (web/ build, see web/README); /app-next and /admin-next always serve the build; /legacy/* always the old pages
 
 # Demo "new movie" candidate source (demo-use-case-scenarios D-4..D-6).
 new_items:

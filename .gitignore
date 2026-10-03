@@ -27,3 +27,7 @@ movielens32m-*.zip
 
 # oh-my-claudecode runtime state / session logs (local only)
 .omc/
+
+# React frontend (web/): dependencies and build output
+web/node_modules/
+web/dist/

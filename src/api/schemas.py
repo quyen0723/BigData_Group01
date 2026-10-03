@@ -123,6 +123,7 @@ class DemoSettingsOut(BaseModel):
     ratingPollTimeoutSeconds: int
     newItemsEnabled: bool
     demoMovieIdStart: int
+    tierThreshold: int          # routing.T_few_enough: ratings needed before a user leaves the few_history tier
 
 
 class DemoMovieOut(BaseModel):

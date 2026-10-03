@@ -48,6 +48,7 @@ class ApiConfig:
     ratings_topic: str
     produce_timeout_seconds: int
     rating_poll_timeout_seconds: int = 60
+    ui: str = "legacy"          # which pages /app, /admin and /demo serve: "legacy" (static files) or "react" (web/ build)
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,16 @@ class ServingConfig:
     api_log_path: str
     new_items: NewItemsConfig = NewItemsConfig()
     retrain_n_min_events: int = 50
+
+
+UI_CHOICES = ("legacy", "react")
+
+
+def _ui_choice(value: object) -> str:
+    text = str(value).strip().lower()
+    if text not in UI_CHOICES:
+        raise ValueError(f"api.ui must be one of {UI_CHOICES}, got {value!r}")
+    return text
 
 
 def load_serving_config(path: Path | None = None) -> ServingConfig:
@@ -100,6 +111,7 @@ def load_serving_config(path: Path | None = None) -> ServingConfig:
             ratings_topic=raw["api"].get("ratings_topic", "ratings.v1"),
             produce_timeout_seconds=int(raw["api"].get("produce_timeout_seconds", 10)),
             rating_poll_timeout_seconds=int(raw["api"].get("rating_poll_timeout_seconds", 60)),
+            ui=_ui_choice(raw["api"].get("ui", "legacy")),
         ),
         routing=RoutingConfig(
             threshold_t=int(raw["routing"]["T_few_enough"]),

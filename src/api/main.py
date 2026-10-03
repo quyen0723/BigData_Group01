@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import time
 import uuid
@@ -44,6 +45,16 @@ from .schemas import (
 
 app = FastAPI(title="MovieLens Recommendation API")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+log = logging.getLogger("api")
+
+# The React build (web/ -> `npm run build`). Outside src/, which the api container mounts over, so the
+# Docker image keeps it (design D-9/D-10). Read at request time so tests and `docker run -e` can change it.
+DEFAULT_WEB_DIST_DIR = "/app/web-dist"
+
+# Pages are small and their asset names change with every build, so a browser must ask again each time;
+# assets carry a content hash in their name and never change under the same name.
+PAGE_CACHE = {"Cache-Control": "no-cache"}
+ASSET_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 MOVIELENS_GENRES = frozenset({
     "Action", "Adventure", "Animation", "Children", "Comedy", "Crime", "Documentary", "Drama",
@@ -347,6 +358,7 @@ def debug_system(
             ratingPollTimeoutSeconds=cfg.api.rating_poll_timeout_seconds,
             newItemsEnabled=cfg.new_items.enabled,
             demoMovieIdStart=cfg.new_items.id_range_start,
+            tierThreshold=cfg.routing.threshold_t,
         ),
         demoMovies=[
             DemoMovieOut(
@@ -370,19 +382,85 @@ def user_ratings(
     return RatingHistoryOut(userId=userId, total=total, items=[RatedMovieOut(**item) for item in items])
 
 
+def get_web_dist() -> Path:
+    return Path(os.environ.get("WEB_DIST_DIR", DEFAULT_WEB_DIST_DIR))
+
+
+def _built_page(name: str) -> Path | None:
+    page = get_web_dist() / name
+    return page if page.is_file() else None
+
+
+_warned_missing_build = False
+
+
+def _page(cfg: ServingConfig, built_name: str, legacy_name: str, *, force: str | None = None) -> FileResponse:
+    """One of the two UIs (specs/web-frontend "Switch the default pages by configuration").
+    `force` is "react" for the -next routes (404 without a build) or "legacy" for /legacy/*;
+    None follows `api.ui` and falls back to the old page, with one warning, when the build is missing."""
+    global _warned_missing_build
+    if not cfg.api.demo_enabled:
+        raise HTTPException(status_code=404)
+    use = force or cfg.api.ui
+    if use == "react":
+        built = _built_page(built_name)
+        if built is not None:
+            return FileResponse(built, headers=PAGE_CACHE)
+        if force == "react":
+            raise HTTPException(status_code=404)
+        if not _warned_missing_build:
+            _warned_missing_build = True
+            log.warning("api.ui is 'react' but %s has no %s: serving the legacy page (run `npm run build` in web/)",
+                        get_web_dist(), built_name)
+    return FileResponse(STATIC_DIR / legacy_name, headers=PAGE_CACHE)
+
+
 @app.get("/demo", include_in_schema=False)
 @app.get("/admin", include_in_schema=False)
 def admin_page(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
     """The admin console. `/admin` is its name now; `/demo` stays so existing docs and
     evidence keep working (specs/demo-admin-console/spec.md). Demo-only: 404 when the flag is off."""
-    if not cfg.api.demo_enabled:
-        raise HTTPException(status_code=404)
-    return FileResponse(STATIC_DIR / "demo.html")
+    return _page(cfg, "admin.html", "demo.html")
 
 
 @app.get("/app", include_in_schema=False)
 def user_app_page(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
     """The user-facing page (specs/demo-user-app/spec.md). Demo-only: 404 when the flag is off."""
+    return _page(cfg, "app.html", "app.html")
+
+
+@app.get("/app-next", include_in_schema=False)
+def user_app_next(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "app.html", "app.html", force="react")
+
+
+@app.get("/admin-next", include_in_schema=False)
+def admin_next(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "admin.html", "demo.html", force="react")
+
+
+@app.get("/legacy/app", include_in_schema=False)
+def legacy_user_app(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "app.html", "app.html", force="legacy")
+
+
+@app.get("/legacy/admin", include_in_schema=False)
+def legacy_admin(cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    return _page(cfg, "admin.html", "demo.html", force="legacy")
+
+
+@app.get("/ui/{asset_path:path}", include_in_schema=False)
+def ui_asset(asset_path: str, cfg: ServingConfig = Depends(get_config)) -> FileResponse:
+    """Files of the React build under /ui/ (Vite `base: "/ui/"`). Only dist/assets is served, and a
+    path that leaves it is refused. 404 whenever the demo is off, so a disabled demo exposes no UI code."""
     if not cfg.api.demo_enabled:
         raise HTTPException(status_code=404)
-    return FileResponse(STATIC_DIR / "app.html")
+    try:
+        root = (get_web_dist() / "assets").resolve()
+        target = (get_web_dist() / asset_path).resolve()
+        inside = asset_path.startswith("assets/") and root in target.parents and target.is_file()
+    except (ValueError, OSError):      # e.g. a NUL byte in the path: not a file, so 404 rather than a 500
+        inside = False
+    if not inside:
+        raise HTTPException(status_code=404)
+    return FileResponse(target, headers=ASSET_CACHE)
