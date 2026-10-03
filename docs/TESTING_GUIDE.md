@@ -201,6 +201,142 @@ ngoài, và sẽ báo lỗi nếu trang người dùng lẫn mã admin). Chạy 
 - [ ] Thu nhỏ cửa sổ về 375 px và 768 px: không có thanh cuộn ngang; ở dưới 1024 px thanh bên của `/admin` thành ngăn kéo.
 - [ ] Rollback: đặt `ui: "legacy"`, restart `api`, `/app` ra trang cũ; đặt lại `"react"`.
 
+### Demo WR sống (change `live-weighted-popularity`)
+
+**WR phục vụ gì.** User mới chưa có dữ liệu (tầng `0_history`) nhận danh sách phim phổ biến xếp theo *weighted rating*
+`WR = v/(v+m)·R + m/(v+m)·C` (`v` số rating của phim, `R` điểm trung bình, `C = 3.5287` điểm TB cả tập train, `m = 1000`).
+Công thức kéo điểm của phim ít người chấm về mức trung bình chung, nên Planet Earth (4.468 sao, 173 người chấm) không đứng
+trên Shawshank (4.428 sao, 73,945 người chấm). Trước đây danh sách này là một file tĩnh Quyên tính offline. Khi `popularity.live` bật,
+API tính WR từ **số liệu tập train (collection `movie_stats`) cộng các rating streaming đã áp dụng (ledger `rating_events`)**,
+nên chấm rating thì danh sách đổi theo. Streaming, Kafka và schema ledger không đổi.
+
+Mục **Phổ biến** và endpoint `/debug/popularity` là route demo-only: cần `api.demo_enabled: true` (xem Bước 0 của mục 2b), nếu không trang hiện "Không tải được danh sách phổ biến" (404).
+
+**Chuẩn bị một lần** (khoảng 2–3 phút, quét 32M rating; *đừng làm giữa buổi demo*, nó tranh CPU với `streaming`; trong lúc nó ghi lại `movie_stats`, API tạm dùng artifact):
+```powershell
+docker compose -f docker/docker-compose.yml exec spark python -m loaders.build_movie_stats
+```
+Kỳ vọng: `22,399,368 ratings on 36,526 movies`, `checks: ... -> PASS`, rồi `OK: movielens.movie_stats: 36,526 movies + _meta`.
+Loader từ chối ghi nếu số rating khác `n_train` của Quyên hoặc điểm TB khác `C` đã ghi (có `--dry-run` để chỉ kiểm). Sau đó đặt
+`popularity.live: true` trong `configs/serving.yaml` và `docker compose -f docker/docker-compose.yml restart api`. Kiểm:
+```powershell
+python scripts/wr_live_demo.py check
+```
+Kỳ vọng `PASS (same 10 movies in the same order, WR within 0.0005)`: khi chưa có rating mới, danh sách sống **trùng** danh sách của Quyên.
+Kiểm phía Mongo thật (pipeline ledger và bộ đọc `movie_stats`, trên collection nháp, không chạm dữ liệu thật): `.venv-serving\Scripts\python scripts/check_live_popularity_store.py` → `RESULT: PASS`.
+
+**Kịch bản (khoảng 6 phút):**
+1. `python scripts/demo_wr_explain.py`: số liệu thật của 10 phim ở danh sách cũ (trước WR) và WR của chúng; đổi `--m 0` để thấy thứ tự quay về điểm TB thô.
+2. Admin → mục **Phổ biến** (`/admin#/popularity`): bảng top 10 với điểm TB (R), số rating (v), WR và hạng so với danh sách gốc, tự làm mới mỗi 3 giây.
+   Bấm tên một phim để xem công thức thay số từng bước. Gõ `0` vào ô "Xem trước với m khác": Planet Earth (khoảng 175 rating) lên hạng 1,
+   Shawshank hạng 2 (chỉ là xem trước, người dùng vẫn nhận danh sách thật). Bấm "Đặt lại".
+3. `python scripts/wr_live_demo.py plan`: với từng cặp phim liền kề, cần bao nhiêu rating 5 sao để phim dưới vượt phim trên. Cặp sát nhất là
+   hạng 9 Seven Samurai trên hạng 8 One Flew Over the Cuckoo's Nest: **khoảng 17 rating**. Các cặp khác cần từ 62 đến hàng nghìn.
+4. `python scripts/wr_live_demo.py inject --movie 2019 --n 19`: gửi 19 rating 5 sao từ 19 user giả qua `POST /ratings`, chờ streaming áp dụng
+   (đã đo **12–51 giây**, không tức thời), rồi in bảng trước và sau. Kỳ vọng: Seven Samurai lên hạng 8 (WR 4.2054 → 4.2065, số rating `12,795 (+19)`),
+   Cuckoo's Nest xuống hạng 9; bảng admin tự đổi; một tài khoản mới ở `/app` thấy Seven Samurai ở hạng 8.
+5. `python scripts/wr_live_demo.py spam --n 10`: nhồi 5 sao cho phim ít người chấm nhất trong top 50 theo điểm TB thô (Planet Earth). In WR sau +10 và +100 rating
+   (khoảng 3.68 và 3.77, vẫn xa ngưỡng top 10 là 4.199) và số rating cần để vượt ngưỡng (cỡ 780). `--n 0` chỉ in kế hoạch, `--dry-run` không gửi gì.
+
+**Điều phải nói đúng khi trình bày:**
+- Chỉ **một cặp** đổi hạng được bằng ít rating; phim càng nhiều rating càng "nặng", các cặp khác cần hàng trăm đến hàng nghìn.
+- WR **chống chịu, không miễn nhiễm**: Planet Earth cần cỡ 780 rating 5 sao (4,5 lần số rating thật) mới vào top 10.
+- Rating không có hiệu lực ngay: đi qua Kafka và streaming (12–51 giây), rồi API làm mới danh sách (bộ nhớ đệm 2 giây).
+- WR sống chỉ đổi danh sách phổ biến. Tầng few/enough (content, ALS) và phim mới không đổi.
+- Bảng chỉ là tính toán trên số liệu tập train của Quyên cộng rating mới. Việc huấn luyện lại model vẫn do Quyên làm.
+
+**Dọn dữ liệu giả sau khi demo — bắt buộc trước khi bàn giao retrain** (gói bàn giao lấy event từ ledger):
+```powershell
+.venv-serving\Scripts\python scripts/purge_demo_ratings.py            # chỉ đếm (dry run)
+.venv-serving\Scripts\python scripts/purge_demo_ratings.py --yes      # xoá user 999200000..999299999 khỏi ledger, user_rated, user_history
+.venv-serving\Scripts\python scripts/purge_demo_ratings.py --all-synthetic --yes    # cả dải 999,000,000..999,999,999 (gồm 999100001..10)
+```
+Script từ chối mọi dải ngoài 999,000,000–999,999,999. Bảng admin bỏ các rating đó sau chừng 2 giây. Parquet `curated_ratings` (phân vùng `year=2026`)
+vẫn còn các dòng đó; muốn dọn thì **dừng `streaming` trước** (nó đang ghi vào cùng phân vùng):
+```powershell
+docker compose -f docker/docker-compose.yml stop streaming
+docker compose -f docker/docker-compose.yml exec spark python -m loaders.purge_curated_synthetic --all-synthetic            # chỉ đếm
+docker compose -f docker/docker-compose.yml exec spark python -m loaders.purge_curated_synthetic --all-synthetic --apply --streaming-stopped
+docker compose -f docker/docker-compose.yml start streaming
+```
+Job viết lại phân vùng, giữ bản cũ ở `curated_ratings/_purge_old_year=2026` cho tới khi bạn xoá tay. Đã diễn tập trên bản sao (55 → 47 rating).
+
+**Quay lại như cũ:** đặt `popularity.live: false` và restart `api`: user mới nhận lại danh sách artifact. `movie_stats` có thể để nguyên.
+Nếu `movie_stats` bị thiếu hoặc lỗi đọc ledger, API tự dùng artifact (một cảnh báo trong log) và `/recommendations` vẫn trả 200.
+Nếu Quyên đổi `m`, `C`, `min_support` hay cutoff thì chạy lại `build_movie_stats` rồi `check`.
+
+### Test case kiểm hành vi hệ thống qua giao diện (change `movie-catalog-search`)
+
+Phần này không phải kịch bản trình diễn: mỗi dòng là một **hành vi của hệ thống** cần kiểm, làm trên giao diện, có kết quả mong đợi để đối chiếu đúng/sai.
+Công cụ: trang `/app` (người dùng), `/admin#/cases` (case test, hiện tier/strategy/nguồn từng phim), `/admin#/users/<id>` (trạng thái bên trong của user),
+`/admin#/movies` (danh mục phim có tìm kiếm), `/admin#/popularity` (danh sách phổ biến), `/admin#/log` (nhật ký).
+Cột **Nguồn**: **đo** = đã chạy trên stack thật, số liệu là số đo; **code** = suy ra từ code và test tự động, chưa chạy thật trên stack (cần bạn xác nhận).
+Mỗi rating bạn chấm là dữ liệu thật trong Mongo; tài khoản tạo trên trang nằm ngoài dải user giả nên script dọn không xoá được: dùng vài tài khoản thử.
+
+**Cách tìm một phim để chấm hoặc kiểm:** trên `/app` dùng ô **Tìm phim để chấm** (từ 2 ký tự hoặc chọn thể loại); trên `/admin#/movies` dùng bảng **Danh mục phim**
+(tìm tên, lọc thể loại, sắp theo số rating, điểm TB hoặc WR).
+
+**1. Chọn tầng gợi ý** (`/admin#/cases`, ô userId)
+| ID | Làm gì | Kết quả mong đợi | Nguồn |
+|---|---|---|---|
+| TC-01 | Case "1. User có tài khoản, chưa rating" | `tier=0_history · strategy=POPULARITY · interaction_count=0`; cả 10 phim nguồn `popularity`; không có `fallbackReason` | đo |
+| TC-02 | Case tự do, nhập userId `99999999` (không tồn tại), bấm Tải gợi ý | Vẫn `0_history` với 10 phim phổ biến, không lỗi | đo |
+| TC-03 | Case "2. User có rating mới" (An, 700008) | `few_history`, `CONTENT+POPULARITY`, `interaction_count` = số phim An đã chấm (hiện 6) | đo |
+| TC-04 | Tạo tài khoản mới trên `/app`, chấm lần lượt phim (tìm bằng ô tìm), xem `#/users/<id>` sau mỗi lần áp dụng | Sau rating 1 đến 9: `few_history`. Sau rating thứ 10: `enough_history`, vẫn `CONTENT+POPULARITY` và `fallbackReason = als_artifact_missing` (user mới chưa có ALS) | code |
+| TC-05 | Case "Đã có rating và có ALS (user 1)" | `enough_history`, `ALS+CONTENT`, 3 phim nguồn `als` + 7 nguồn `content`, không có `fallbackReason` | đo |
+| TC-06 | Case "Đủ lịch sử nhưng thiếu ALS (user 127249)" | `enough_history`, `CONTENT+POPULARITY`, `fallbackReason = als_artifact_missing` (tô cam) | đo |
+| TC-07 | Tải gợi ý hai lần liền cho cùng một user | Cùng danh sách, cùng thứ tự (kết quả ổn định) | code |
+
+**2. Luồng rating** (`/app` hoặc `/admin#/cases`)
+| ID | Làm gì | Kết quả mong đợi | Nguồn |
+|---|---|---|---|
+| TC-08 | Chấm sao một phim ở case 2 (An), mở `#/log` | Nhật ký: `★ rate …`, `→ Kafka ✓ (202, eventId=…)`, rồi `✓ applied (… batchId=…)` sau **12–51 giây** (không tức thời) | đo |
+| TC-09 | Sau khi `applied`, nhìn danh sách của user đó | Phim vừa chấm **không còn** trong gợi ý; `interaction_count` tăng 1; "Phim bạn đã đánh giá" có phim đó | đo |
+| TC-10 | Tìm phim đó bằng ô tìm trên `/app` | Thẻ phim hiện "Bạn đã chấm N sao" và vẫn chấm lại được | đo |
+| TC-11 | Chấm lại một phim đã chấm (từ ô tìm) bằng số sao khác | Rating mới thay rating cũ, `interaction_count` **không** tăng (cùng một cặp user-phim) | code |
+| TC-12 | Tài khoản mới chấm 5 sao một phim Crime/Thriller (ví dụ Pulp Fiction) | Sau `applied`: `few_history`, danh sách chuyển sang nguồn `content` gồm phim giống (hình sự, chính kịch) | code |
+| TC-13 | Chấm sao một phim rồi tải lại trang ngay (khi chưa `applied`) | Sau khi tải lại, rating vẫn được áp dụng, không mất (event đã nằm trong Kafka) | code |
+
+**3. Phim mới** (admin `#/cases` case 3, và tab `/app` của An)
+| ID | Làm gì | Kết quả mong đợi | Nguồn |
+|---|---|---|---|
+| TC-14 | Thêm phim "Phim thử" (Crime + Drama), xem An | Phim ở **hạng 3** với nhãn **Mới**; nhật ký `phim MỚI … xuất hiện ở hạng 3` | đo |
+| TC-15 | Thêm phim chỉ có thể loại Western, xem An | An **không** thấy (không trùng thể loại An thích) | đo |
+| TC-16 | Thêm hai phim cùng khớp thể loại | An chỉ thấy **một** phim mới (chỉ có 1 chỗ), ở hạng 3 | code |
+| TC-17 | Xem user chưa có rating (case 1) khi đang có phim demo | Không có phim nguồn `new` (phim mới chỉ dành cho tầng few/enough) | code |
+| TC-18 | An chấm phim mới | Đi qua Kafka bình thường (không bị quarantine vì phim có trong danh mục), phim rời danh sách của An | đo |
+| TC-19 | Tìm phim vừa thêm ở `/admin#/movies` và `/app` | Thấy ngay (nhãn "demo" ở admin), không đợi | code |
+| TC-20 | Xoá phim demo | Có hộp thoại xác nhận trước; sau đó biến mất khỏi danh mục và gợi ý; rating đã có vẫn giữ, lịch sử hiện "Phim đã được gỡ khỏi danh mục" | đo |
+
+**4. Danh sách phổ biến (WR)** (`/admin#/popularity`, tài khoản mới ở `/app`)
+| ID | Làm gì | Kết quả mong đợi | Nguồn |
+|---|---|---|---|
+| TC-21 | Tạo tài khoản mới, xem 10 phim đầu | Shawshank, Godfather, Usual Suspects, Schindler's List, Godfather II… giống hệt bảng ở mục Phổ biến; mọi tài khoản mới nhận cùng danh sách | đo |
+| TC-22 | Danh mục phim, tìm "planet earth" | Planet Earth (2006): 2,950 rating, điểm TB 4.463 nhưng WR **3.668**, thấp hơn ngưỡng top 10 (4.199) nên **không** lọt top 10 | đo |
+| TC-23 | Cùng bảng, tìm "planet earth" | Planet Earth II (2016): có 1,956 rating nhưng điểm TB và WR là "—" (không có rating trong tập train, ra sau 10/2016) | đo |
+| TC-24 | Mục Phổ biến, gõ `0` vào ô "Xem trước với m khác" | Planet Earth lên hạng 1 kèm dải "Đang xem trước"; danh sách tài khoản mới nhận **không đổi**; "Đặt lại" quay về | đo |
+| TC-25 | Chấm một phim đang trong top 10 (ví dụ Shawshank), mở mục Phổ biến sau khi `applied` | Dòng "cộng N rating mới" tăng 1 và phim đó hiện "+n mới" ở cột số rating | đo |
+| TC-26 | Danh mục phim, sắp theo "Điểm trung bình" giảm dần | Đầu bảng là các phim có **1 rating 5 sao** (điểm TB 5.0): lý do danh sách phổ biến dùng WR thay vì điểm TB thô | đo |
+
+**5. Tìm kiếm** (`/admin#/movies` và `/app`)
+| ID | Làm gì | Kết quả mong đợi | Nguồn |
+|---|---|---|---|
+| TC-27 | Tìm "pulp" | 4 phim: Pulp Fiction (1994), Pulp (1972), Pulp: a Film About Life, Death & Supermarkets (2014), Marvel: 75 Years, From Pulp to Pop! (2014); không phân biệt hoa thường | đo |
+| TC-28 | Tìm "godfather part" | 2 phim: Part II và Part III (mọi từ phải có mặt) | đo |
+| TC-29 | Lọc thể loại Western (không gõ tên) | Admin: 1,696 phim, 85 trang. `/app`: "Tìm thấy 1,696 phim, đang hiện 12" và nút "Xem thêm" | đo |
+| TC-30 | Admin sắp theo số rating giảm dần | Shawshank (102,939), Forrest Gump (100,296), Pulp Fiction (98,425), The Matrix (93,808) | đo |
+| TC-31 | `/app` gõ 1 ký tự | Không tìm; hiện "Nhập ít nhất 2 ký tự hoặc chọn một thể loại." | đo |
+| TC-32 | Admin gõ tên không có thật ("zzzz") | "Không có phim nào khớp." (admin), "Không tìm thấy phim nào." (`/app`) | đo |
+
+**6. Chịu lỗi** (cần một lệnh)
+| ID | Làm gì | Kết quả mong đợi | Nguồn |
+|---|---|---|---|
+| TC-33 | `docker compose -f docker/docker-compose.yml stop streaming`, chấm sao ở `/app` | Rating được nhận (202) nhưng không áp dụng; trang chờ tối đa 60 giây rồi dừng chờ; sau `start streaming` rating vẫn được áp dụng | đo (đợt demo trước, `evidence/p2_demo_user_app.txt`) |
+| TC-34 | `docker compose -f docker/docker-compose.yml stop kafka`, chấm sao ở `/app`, rồi `start kafka` | Thẻ "Đang gửi đánh giá…", sau khoảng 11 giây toast "Chưa lưu được đánh giá. Vui lòng thử lại." kèm nút **Thử lại**; sao được mở khoá. Streaming cần 1–2 phút để nối lại Kafka | đo (đợt demo trước) |
+
+Ghi chú khi đọc kết quả: số **ratings** trong danh mục là tổng số rating (toàn bộ dữ liệu cộng rating mới), còn **Điểm TB và WR** tính trên tập train (đến 10/2016) cộng rating mới,
+cùng nguồn với danh sách phổ biến, nên hai con số này có thể lệch nhau với phim ra sau 2016.
+
 ### Demo hai vai bằng hai tab (change `demo-user-app-personas`)
 
 Có **hai trang** cho hai vai, mở ở hai tab cạnh nhau:
